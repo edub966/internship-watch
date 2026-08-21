@@ -455,6 +455,98 @@ def run(config_path: str, threshold: float, enrich: bool, seed: bool = False):
         db.close()
 
 
+
+def bootstrap_alerts(config_path: str, threshold: float):
+    """Send currently active qualifying jobs to Discord once.
+
+    Zero Tavily searches. Existing delivered alerts are not resent.
+    """
+    import time
+    from src.models import Job
+
+    load_dotenv(ROOT / ".env")
+    db = JobDB(_db_path())
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+
+        configs = {
+            c["name"]: c
+            for c in cfg.get("companies", [])
+            if c.get("enabled", True)
+        }
+
+        rows = db.conn.execute(
+            """
+            SELECT company, external_id, title, location, url, source,
+                   posted_at, description, score
+            FROM jobs
+            WHERE is_active=1
+            ORDER BY score DESC, company, title
+            """
+        ).fetchall()
+
+        eligible = []
+        skipped_already_sent = 0
+        skipped_ineligible = 0
+
+        for row in rows:
+            job = Job(*row)
+            company = configs.get(job.company)
+
+            ok, reason = _eligibility(job, company, threshold)
+
+            if not ok:
+                skipped_ineligible += 1
+                continue
+
+            if db.alert_is_sent(job):
+                skipped_already_sent += 1
+                continue
+
+            eligible.append(job)
+
+        print("BOOTSTRAP ALERTS")
+        print("Tavily searches: 0")
+        print(f"Qualifying unsent jobs: {len(eligible)}")
+        print(f"Already alerted: {skipped_already_sent}")
+        print(f"Active but ineligible: {skipped_ineligible}")
+
+        if not eligible:
+            print("Nothing new to bootstrap.")
+            return
+
+        print("\nSending:")
+        for job in eligible:
+            print(f"  {job.company} — {job.title} — {job.location}")
+
+        sent = 0
+        failed = 0
+
+        for job in eligible:
+            db.enqueue_alert(job)
+
+            try:
+                leads = db.get_leads(job)
+                discord_alert(job, leads, "")
+                db.mark_alert_sent(job)
+                db.set_networking_notified_count(job, len(leads))
+                sent += 1
+                print(f"SENT  {job.company} — {job.title}")
+            except Exception as e:
+                failed += 1
+                db.mark_alert_error(job, str(e))
+                print(f"ERROR {job.company} — {job.title}: {e}")
+
+            time.sleep(0.5)
+
+        print(f"\nBootstrap complete: {sent} sent, {failed} failed.")
+        print("Tavily searches used: 0")
+
+    finally:
+        db.close()
+
 def deep_enrich(config_path: str, company_name: str, external_id: str, include_uf: bool = False):
     """Explicit paid deep-search for one already stored US-eligible posting.
 
@@ -521,6 +613,7 @@ if __name__ == "__main__":
     parser.add_argument("--deep-enrich", nargs=2, metavar=("COMPANY", "REQ"), help="Opt-in exact-post enrichment for one stored job")
     parser.add_argument("--include-uf", action="store_true", help="Also spend/cache the UF-engineer search during --deep-enrich")
     parser.add_argument("--roster-check", action="store_true", help="Fetch enabled sources only; zero DB/Tavily/Discord side effects")
+    parser.add_argument("--bootstrap-alerts", action="store_true", help="Send currently active qualifying jobs to Discord once; zero Tavily")
     parser.add_argument("--company", help="Limit --roster-check to one company name")
     args = parser.parse_args()
     if args.preflight:
@@ -529,5 +622,7 @@ if __name__ == "__main__":
         roster_check(args.config, args.threshold, company_name=args.company)
     elif args.deep_enrich:
         deep_enrich(args.config, args.deep_enrich[0], args.deep_enrich[1], include_uf=args.include_uf)
+    elif args.bootstrap_alerts:
+        bootstrap_alerts(args.config, args.threshold)
     else:
         run(args.config, args.threshold, not args.no_enrich, seed=args.seed)

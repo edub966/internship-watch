@@ -101,6 +101,57 @@ def matches_target_year(job: Job, target_year: int | None) -> bool:
     return not years or int(target_year) in years
 
 
+
+def academic_ineligibility_reason(job: Job) -> str | None:
+    """Return a reason only for academic requirements that clearly exclude us.
+
+    Conservative on purpose: uncertain wording is allowed through.
+    """
+    _, text = _text(job)
+
+    graduate_only_patterns = [
+        r"\bph\.?d\.?\s+(?:degree\s+)?required\b",
+        r"\bdoctoral\s+degree\s+required\b",
+        r"\bmaster'?s?\s+degree\s+required\b",
+        r"\bmasters?\s+degree\s+required\b",
+        r"\bgraduate\s+students?\s+only\b",
+        r"\bph\.?d\.?\s+students?\s+only\b",
+        r"\bmaster'?s?\s+students?\s+only\b",
+        r"\bminimum\b.{0,40}\b(?:master'?s?|ph\.?d\.?|doctoral)\b",
+    ]
+
+    for pattern in graduate_only_patterns:
+        if re.search(pattern, text, re.I):
+            # Do not reject if bachelor's/undergraduate is explicitly accepted too.
+            context_has_undergrad = re.search(
+                r"\b(?:bachelor'?s?|undergraduate)\b", text, re.I
+            )
+            if not context_has_undergrad:
+                return "graduate-degree-only requirement"
+
+    # Explicit requirements to finish school too early for our target.
+    # We intentionally only hard-reject 2027-or-earlier language rather than
+    # trying to infer eligibility from every random year in the description.
+    grad_patterns = [
+        r"\bgraduat(?:e|es|ing|ion)\b.{0,50}\b(?:in|by|before|on or before|no later than)\b.{0,20}\b(20\d{2})\b",
+        r"\b(?:expected\s+)?graduation\s+(?:date|year)?\b.{0,40}\b(20\d{2})\b",
+        r"\b(20\d{2})\b.{0,40}\bgraduat(?:e|es|ing|ion)\b",
+    ]
+
+    for pattern in grad_patterns:
+        for match in re.finditer(pattern, text, re.I):
+            year = int(match.group(1))
+
+            # "2027 or later" does NOT exclude us.
+            context = text[max(0, match.start() - 30):match.end() + 30]
+            if re.search(r"\b(?:or later|or after|and later|or beyond)\b", context, re.I):
+                continue
+
+            if year <= 2027:
+                return f"graduation requirement too early ({year})"
+
+    return None
+
 def relevance_score(job: Job, target_year: int | None = None) -> float:
     title, text = _text(job)
 
@@ -108,6 +159,8 @@ def relevance_score(job: Job, target_year: int | None = None) -> float:
         return -20.0
     if not matches_target_year(job, target_year):
         return -30.0
+    if academic_ineligibility_reason(job):
+        return -40.0
 
     fit = _fit_points(job)
     score = 10.0 + fit
@@ -134,6 +187,10 @@ def is_relevant(job: Job, threshold: float = 12.0, target_year: int | None = Non
 
     if not matches_target_year(job, target_year):
         job.score = -30.0
+        return False
+
+    if academic_ineligibility_reason(job):
+        job.score = -40.0
         return False
 
     fit = _fit_points(job)
