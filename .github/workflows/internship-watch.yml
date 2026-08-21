@@ -1,0 +1,84 @@
+name: Internship Watch
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Seed current jobs without alerting"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "17 * * * *"
+
+# Prevent two scans from racing on the persistent SQLite state branch.
+concurrency:
+  group: internship-watch
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Run zero-credit tests
+        run: python -m pytest -q
+
+      - name: Restore persistent SQLite snapshot
+        run: |
+          mkdir -p data
+          git fetch origin internship-state:refs/remotes/origin/internship-state 2>/dev/null || true
+          git show refs/remotes/origin/internship-state:jobs.db > data/jobs.db 2>/dev/null || true
+
+      - name: Scan jobs and deliver queued alerts
+        env:
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          TAVILY_AUTO_SEARCH_KINDS: "recruiter"
+          TAVILY_MAX_QUERIES: "1"
+          TAVILY_MAX_CREDITS_PER_RUN: "4"
+          TAVILY_DAILY_CREDIT_CAP: "8"
+          TAVILY_CREDIT_RESERVE: "250"
+          TAVILY_REQUIRE_USAGE_CHECK: "true"
+          MAX_NETWORKING_JOBS_PER_RUN: "20"
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DB_PATH: data/jobs.db
+          SEED: ${{ github.event.inputs.seed }}
+        run: |
+          # A brand-new GitHub deployment has no persisted DB yet. Seed it
+          # silently on the first run so existing internships cannot create
+          # an alert storm before the watcher has a baseline.
+          if [ "$SEED" = "true" ] || [ ! -s data/jobs.db ]; then
+            echo "No persisted state (or seed requested); establishing baseline without alerts."
+            python -m src.main --seed
+          else
+            python -m src.main
+          fi
+
+      # Persist even if Tavily or Discord fails. Pending alerts stay queued for retry.
+      - name: Persist state in orphan branch
+        if: always()
+        run: |
+          if [ ! -f data/jobs.db ]; then
+            echo "No state DB to persist"
+            exit 0
+          fi
+          cp data/jobs.db /tmp/jobs.db
+          git config user.name "internship-watch-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout --orphan internship-state
+          git rm -rf .
+          cp /tmp/jobs.db jobs.db
+          git add jobs.db
+          git commit -m "Update internship watch state" || true
+          git push -f origin internship-state

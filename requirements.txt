@@ -1,0 +1,6 @@
+requests==2.32.5
+beautifulsoup4==4.13.4
+PyYAML==6.0.2
+python-dotenv==1.1.1
+tavily-python==0.7.27
+pytest==8.4.1

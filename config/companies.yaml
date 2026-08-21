@@ -1,0 +1,164 @@
+# v5.6 active roster: sources below use public career-site endpoints that the
+# pipeline can commission with --roster-check before touching the database.
+# Every active company is target-cycle 2027 and US-only for alerts/Tavily.
+companies:
+  - name: NVIDIA
+    enabled: true
+    type: workday
+    host: nvidia.wd5.myworkdayjobs.com
+    tenant: nvidia
+    site: NVIDIAExternalCareerSite
+    search_text: intern
+    target_year: 2027
+    us_only: true
+
+  - name: Qualcomm
+    enabled: true
+    type: eightfold
+    board_url: https://careers.qualcomm.com/careers
+    domain: qualcomm.com
+    query: intern
+    max_pages: 20
+    target_year: 2027
+    us_only: true
+
+  - name: Intel
+    enabled: true
+    type: workday
+    host: intel.wd1.myworkdayjobs.com
+    tenant: intel
+    site: External
+    search_text: intern
+    target_year: 2027
+    us_only: true
+
+  - name: Broadcom
+    enabled: true
+    type: workday
+    host: broadcom.wd1.myworkdayjobs.com
+    tenant: broadcom
+    site: External_Career
+    search_text: intern
+    target_year: 2027
+    us_only: true
+
+  - name: Analog Devices
+    enabled: true
+    type: workday
+    host: analogdevices.wd1.myworkdayjobs.com
+    tenant: analogdevices
+    site: External
+    search_text: intern
+    target_year: 2027
+    us_only: true
+
+  - name: Cadence
+    enabled: true
+    type: workday
+    host: cadence.wd1.myworkdayjobs.com
+    tenant: cadence
+    site: External_Careers
+    search_text: intern
+    target_year: 2027
+    us_only: true
+
+  - name: Marvell
+    enabled: true
+    type: workday
+    host: marvell.wd1.myworkdayjobs.com
+    tenant: marvell
+    site: MarvellCareers
+    search_text: intern
+    target_year: 2027
+    us_only: true
+
+  - name: Micron
+    enabled: true
+    type: eightfold
+    board_url: https://careers.micron.com/careers
+    domain: micron.com
+    query: intern
+    max_pages: 30
+    target_year: 2027
+    us_only: true
+
+  - name: NXP
+    enabled: true
+    type: workday
+    host: nxp.wd3.myworkdayjobs.com
+    tenant: nxp
+    site: careers
+    search_text: intern
+    target_year: 2027
+    us_only: true
+
+  - name: Silicon Labs
+    enabled: true
+    type: workday
+    host: silabs.wd1.myworkdayjobs.com
+    tenant: silabs
+    site: SiliconLabsCareers
+    search_text: intern
+    target_year: 2027
+    us_only: true
+
+  - name: Microsoft
+    enabled: true
+    type: eightfold
+    board_url: https://apply.careers.microsoft.com/careers
+    domain: microsoft.com
+    query: intern
+    max_pages: 40
+    target_year: 2027
+    us_only: true
+
+  # Amazon's source adapter queries the public Amazon Jobs JSON search with a
+  # hard country=USA scope before the normal downstream location guard.
+  - name: Amazon
+    enabled: true
+    type: amazon
+    query: intern
+    country: USA
+    result_limit: 100
+    max_pages: 20
+    page_delay: 0.10
+    target_year: 2027
+    us_only: true
+
+  # Apple's source adapter bootstraps the public jobs.apple.com CSRF session and
+  # searches only the official USA location facet.
+  - name: Apple
+    enabled: true
+    type: apple
+    query: intern
+    locale: en-us
+    location_filter: postLocation-USA
+    # Apple API encodes Students: Internships as team/subteam STDNT/INTRN;
+    # the adapter expands these to teamsAndSubTeams-STDNT / subTeam-INTRN.
+    # Source-side filtering avoids scanning 1,000+ unrelated US roles.
+    team: STDNT
+    sub_team: INTRN
+    max_pages: 30
+    target_year: 2027
+    us_only: true
+
+# These are desirable CE targets, but we intentionally do NOT enable them until
+# a stable, testable public career-source adapter is commissioned. Keeping them
+# staged is safer than pretending a brittle scraper is production-ready.
+staged_companies:
+  - name: AMD
+    reason: Current Phenom careers site needs a dedicated stable adapter before activation.
+  - name: Arm
+    reason: Current careers search needs a dedicated validated adapter before activation.
+  - name: Google
+    reason: Current careers site does not expose a stable anonymous source we have commissioned yet.
+  - name: Meta
+    reason: Careers search is GraphQL/persisted-query based and requires a robust dedicated adapter.
+  - name: Synopsys
+    reason: Current careers flow needs a dedicated validated adapter before activation.
+  - name: Texas Instruments
+    reason: Add after its current ATS endpoint is verified and unit-tested.
+  - name: Tesla
+    reason: Add after its current ATS endpoint is verified and unit-tested.
+  - name: SpaceX
+    reason: Add after its current ATS endpoint is verified and unit-tested.
