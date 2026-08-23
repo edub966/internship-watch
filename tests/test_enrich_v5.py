@@ -231,7 +231,16 @@ def test_paid_attempt_is_written_to_local_ledger(monkeypatch, tmp_path):
     db.close()
 
 
-def test_duplicate_recruiter_content_collapses(monkeypatch, tmp_path):
+def test_role_bucketed_recruiter_queries_are_distinct_and_specific(monkeypatch):
+    monkeypatch.delenv("TAVILY_AUTO_SEARCH_KINDS", raising=False)
+    specs = build_search_specs(_job())
+    recruiter = next(s for s in specs if s.kind == "recruiter")
+    assert recruiter.role_bucket == "hardware"
+    assert "ASIC" in recruiter.query or "silicon" in recruiter.query.lower()
+    assert "university recruiter" not in recruiter.query.lower()
+
+
+def test_recruiter_dedupe_preserves_distinct_profile_urls(monkeypatch, tmp_path):
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
     monkeypatch.setenv("TAVILY_AUTO_SEARCH_KINDS", "recruiter")
 
@@ -248,6 +257,6 @@ def test_duplicate_recruiter_content_collapses(monkeypatch, tmp_path):
     budget = TavilyBudget("tvly-test", 2, 0, True, _usage, daily_credit_cap=20,
                           local_daily_usage_getter=db.tavily_credits_used_today)
     leads = search_linkedin_public_index(_job(), db=db, budget=budget, client=DuplicateRecruiterClient())
-    assert len(leads) == 2
-    assert {lead.title for lead in leads} == {"A Recruiter", "C Recruiter"}
+    assert len(leads) == 3
+    assert {lead.url for lead in leads} == {"https://www.linkedin.com/in/a", "https://www.linkedin.com/in/b", "https://www.linkedin.com/in/c"}
     db.close()

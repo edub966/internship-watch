@@ -18,6 +18,7 @@ class Lead:
     query: str
     kind: str = "other"
     score: float = 0.0
+    role_bucket: str = ""
 
 
 @dataclass(frozen=True)
@@ -26,15 +27,23 @@ class SearchSpec:
     query: str
     include_domains: tuple[str, ...]
     ttl_hours: int
+    role_bucket: str = "general_engineering"
+    max_results: int = 5
+    search_depth: str = "basic"
+    country: str = "united states"
 
     @property
     def cache_key(self) -> str:
         material = json.dumps(
             {
-                "v": 2,
+                "v": 3,
                 "kind": self.kind,
+                "role_bucket": self.role_bucket,
                 "query": self.query,
                 "domains": self.include_domains,
+                "max_results": self.max_results,
+                "search_depth": self.search_depth,
+                "country": self.country,
             },
             sort_keys=True,
         )
@@ -203,33 +212,81 @@ class TavilyBudget:
         self.spent_this_run += 1
 
 
+def _normalize_text(value: str) -> str:
+    return " ".join((value or "").lower().replace("/", " ").replace("-", " ").replace("_", " ").split())
+
+
+def _token_bound_phrase(text: str, phrase: str) -> bool:
+    normalized = _normalize_text(text)
+    phrase_norm = _normalize_text(phrase)
+    if not phrase_norm:
+        return False
+    if phrase_norm not in normalized:
+        return False
+    start = normalized.index(phrase_norm)
+    end = start + len(phrase_norm)
+    before_ok = start == 0 or not normalized[start - 1].isalnum()
+    after_ok = end == len(normalized) or not normalized[end].isalnum()
+    return before_ok and after_ok
+
+
+def _role_bucket(job: Job) -> str:
+    title = _normalize_text(job.title or "")
+    description = _normalize_text(job.description or "")
+    combined = f"{title} {description}"
+
+    hardware_phrases = (
+        "asic", "rtl", "fpga", "vlsi", "physical design", "dft", "digital design",
+        "silicon design", "chip design", "hardware", "computer architecture", "verification",
+        "design verification", "semiconductor", "soc rtl", "system on chip",
+    )
+    firmware_phrases = (
+        "firmware", "embedded", "rtos", "bsp", "microcontroller", "device firmware",
+        "embedded linux", "driver development", "embedded driver",
+    )
+    software_phrases = (
+        "software engineering", "systems software", "compiler", "cuda", "gpu software",
+        "gpu", "kernel", "software infrastructure", "software engineer",
+    )
+    ml_phrases = (
+        "machine learning", "deep learning", "artificial intelligence", "ai ml", "ml engineer",
+        "ai software", "model training", "inference engine",
+    )
+
+    if any(_token_bound_phrase(combined, phrase) for phrase in ml_phrases):
+        return "machine_learning"
+    if any(_token_bound_phrase(combined, phrase) for phrase in hardware_phrases):
+        return "hardware"
+    if any(_token_bound_phrase(combined, phrase) for phrase in firmware_phrases):
+        return "firmware_embedded"
+    if any(_token_bound_phrase(combined, phrase) for phrase in software_phrases):
+        return "software"
+    return "general_engineering"
+
+
+def _role_search_terms(bucket: str) -> str:
+    mapping = {
+        "hardware": "hardware ASIC RTL silicon design",
+        "firmware_embedded": "firmware embedded systems",
+        "software": "software engineering systems",
+        "machine_learning": "AI ML machine learning",
+        "general_engineering": "engineering hardware software",
+    }
+    return mapping.get(bucket, mapping["general_engineering"])
+
+
 def _role_terms(job: Job) -> str:
-    title = (job.title or "").lower()
-    groups = [
-        ("hardware", ("hardware", "asic", "rtl", "verification", "silicon", "fpga", "digital")),
-        ("firmware embedded", ("firmware", "embedded", "soc", "driver")),
-        ("software", ("software", "sw ", "compiler", "cuda", "gpu")),
-        ("machine learning", ("machine learning", " ai ", "ml ")),
-    ]
-    chosen = [label for label, tokens in groups if any(t in f" {title} " for t in tokens)]
-    return " ".join(chosen[:2]) or "engineering"
+    return _role_search_terms(_role_bucket(job))
 
 
 def build_search_specs(job: Job) -> List[SearchSpec]:
-    """Build domain-restricted Tavily searches without relying on Google operators.
-
-    Only the exact-post query is job-specific. Recruiter and UF-engineer queries
-    are company-level and are cached for two weeks, so ten new jobs at one company
-    do not burn the same two credits ten times.
-    """
+    """Build domain-restricted Tavily searches without relying on Google operators."""
     clean_title = " ".join((job.title or "").replace('"', "").split())
     company = " ".join((job.company or "").replace('"', "").split())
     req = " ".join(str(job.external_id or "").replace('"', "").split())
-    role_terms = _role_terms(job)
+    bucket = _role_bucket(job)
+    role_terms = _role_search_terms(bucket)
 
-    # Some ATS titles already begin with the employer name (for example
-    # "NVIDIA 2027 Internships: Hardware ASIC Design"). Avoid sending
-    # "NVIDIA NVIDIA ..." to the search API.
     if company and clean_title.lower().startswith(company.lower() + " "):
         clean_title = clean_title[len(company):].strip()
 
@@ -238,24 +295,31 @@ def build_search_specs(job: Job) -> List[SearchSpec]:
         exact_parts.append(req)
     exact_parts.extend(["internship", "hiring"])
 
+    recruiter_query = f"{company} United States {role_terms} recruiter"
     return [
         SearchSpec(
             kind="exact_post",
             query=" ".join(exact_parts),
             include_domains=("linkedin.com/posts",),
             ttl_hours=18,
+            role_bucket="exact_post",
+            max_results=5,
         ),
         SearchSpec(
             kind="recruiter",
-            query=f"{company} United States university recruiter",
+            query=recruiter_query,
             include_domains=("linkedin.com/in",),
             ttl_hours=24 * 14,
+            role_bucket=bucket,
+            max_results=10,
         ),
         SearchSpec(
             kind="uf_engineer",
             query=f"{company} University of Florida {role_terms} engineer",
             include_domains=("linkedin.com/in",),
             ttl_hours=24 * 14,
+            role_bucket=bucket,
+            max_results=5,
         ),
     ]
 
@@ -295,6 +359,11 @@ def _canonical_linkedin_url(url: str) -> str:
     if host != "linkedin.com" and not host.endswith(".linkedin.com"):
         return ""
     path = p.path.rstrip("/") or "/"
+    if "/in/" in path:
+        tail = path.split("/in/", 1)[1]
+        parts = tail.split("/")
+        if parts and parts[0]:
+            path = "/in/" + parts[0]
     return urlunparse(("https", "www.linkedin.com", path, "", "", ""))
 
 
@@ -315,8 +384,8 @@ def _score(job: Job, title: str, snippet: str, url: str, tavily_score: float = 0
         if token in hay:
             s += 2
 
-    title_tokens = [t for t in job.title.lower().replace(',', ' ').split() if len(t) >= 4]
-    s += min(sum(1 for t in title_tokens if t in hay), 6)
+    title_tokens = [t for t in _normalize_text(job.title).split() if len(t) >= 4]
+    s += min(sum(1 for t in title_tokens if t in _normalize_text(hay).split()), 6)
 
     if job.external_id and str(job.external_id).lower() in hay:
         s += 8
@@ -325,9 +394,10 @@ def _score(job: Job, title: str, snippet: str, url: str, tavily_score: float = 0
         s += 4
 
     for term in [
-        "recruiter", "university", "early careers", "talent", "hiring",
-        "intern", "engineer", "manager", "hardware", "firmware", "silicon",
-        "verification", "software",
+        "recruiter", "recruiting", "early careers", "talent acquisition", "talent partner",
+        "university recruiting", "university recruiter", "university relations",
+        "campus recruiter", "campus recruiting", "intern", "engineer", "manager", "hardware",
+        "firmware", "silicon", "verification", "software",
     ]:
         if term in hay:
             s += 1
@@ -352,6 +422,7 @@ def _result_to_lead(job: Job, row: dict, spec: SearchSpec) -> Optional[Lead]:
         snippet=(row.get("content") or "").strip(),
         query=spec.query,
         kind=spec.kind,
+        role_bucket=spec.role_bucket,
     )
     lead.score = _score(
         job,
@@ -362,12 +433,11 @@ def _result_to_lead(job: Job, row: dict, spec: SearchSpec) -> Optional[Lead]:
         spec.kind,
     )
 
-    # Avoid surfacing very weak search-engine matches just because LinkedIn was returned.
     hay = f"{lead.title} {lead.snippet}".lower()
     if spec.kind == "exact_post":
         req_match = bool(job.external_id and str(job.external_id).lower() in hay)
-        significant = [t for t in job.title.lower().replace(",", " ").split() if len(t) >= 4]
-        title_matches = sum(1 for t in significant if t in hay)
+        significant = [t for t in _normalize_text(job.title).split() if len(t) >= 4]
+        title_matches = sum(1 for t in significant if t in _normalize_text(hay).split())
         if not req_match and title_matches < 2:
             return None
     elif spec.kind == "recruiter":
@@ -375,6 +445,7 @@ def _result_to_lead(job: Job, row: dict, spec: SearchSpec) -> Optional[Lead]:
             "recruiter",
             "recruiting",
             "talent acquisition",
+            "talent partner",
             "early careers",
             "early talent",
             "university recruiting",
@@ -385,6 +456,8 @@ def _result_to_lead(job: Job, row: dict, spec: SearchSpec) -> Optional[Lead]:
             "campus recruiter",
             "campus recruiting",
             "student programs",
+            "sourcer",
+            "staffing",
         )):
             return None
     elif spec.kind == "uf_engineer":
@@ -397,26 +470,16 @@ def _result_to_lead(job: Job, row: dict, spec: SearchSpec) -> Optional[Lead]:
     return lead if lead.score >= minimum else None
 
 
-def _lead_content_signature(lead: Lead) -> str:
-    # Recruiter searches often return the same public recruiting post attached
-    # to several profiles. Keep one copy so Discord surfaces diverse contacts.
-    text = " ".join((lead.snippet or "").lower().split())
-    if not text:
-        return ""
-    return text[:420]
-
-
 def _dedupe_leads(leads: List[Lead]) -> List[Lead]:
     ordered = sorted(leads, key=lambda x: x.score, reverse=True)
     out: List[Lead] = []
-    recruiter_signatures = set()
+    seen_urls = set()
     for lead in ordered:
-        if lead.kind == "recruiter":
-            sig = _lead_content_signature(lead)
-            if sig and sig in recruiter_signatures:
-                continue
-            if sig:
-                recruiter_signatures.add(sig)
+        canonical = _canonical_linkedin_url(lead.url)
+        if canonical and canonical in seen_urls:
+            continue
+        if canonical:
+            seen_urls.add(canonical)
         out.append(lead)
     return out
 
@@ -475,10 +538,10 @@ def search_linkedin_public_index_outcome(
                 db.record_tavily_credit(job.company, spec.kind, spec.cache_key)
             response = client.search(
                 query=spec.query,
-                search_depth="basic",
-                max_results=max(1, min(int(max_per_query), 10)),
+                search_depth=spec.search_depth,
+                max_results=max(1, min(int(spec.max_results or max_per_query), 10)),
                 include_domains=list(spec.include_domains),
-                country="united states",
+                country=spec.country,
                 include_answer=False,
                 include_raw_content=False,
                 auto_parameters=False,
