@@ -1,189 +1,253 @@
 # Internship Watch + Outreach Pipeline (Tavily Edition)
 
-A personal internship intelligence pipeline for a Computer Engineering student. This version uses **Tavily** for public-web discovery instead of Brave Search.
+A Computer Engineering internship monitor that scans public company career pages, filters for target-cycle CE roles, deduplicates them in SQLite, and optionally enriches new matches with public LinkedIn leads via Tavily. It can send Discord alerts and keep a durable networking queue for follow-up.
 
-## What it does
+## What this project does today
 
-1. Polls company career systems (Workday, Lever, Greenhouse, plus a JSON-LD fallback).
-2. Normalizes jobs into one schema.
-3. Scores postings for internship + Computer Engineering fit.
-4. Uses SQLite to identify genuinely new postings instead of repeatedly alerting you.
-5. For each new match, optionally uses Tavily to find publicly indexed LinkedIn posts/profiles related to the role.
-6. Ranks possible outreach leads, including recruiters, likely engineers/managers, and UF alumni.
-7. Sends a Discord alert with the job and the best leads.
-8. Can run automatically every hour with GitHub Actions.
+- Polls enabled company career sources such as Workday, Eightfold, Amazon, Apple, Lever, Greenhouse, and JSON-LD generic pages.
+- Normalizes each posting into a single Job schema.
+- Scores and filters postings for CE relevance using `src/filtering.py`.
+- Uses a target-year filter and a US-only gate by default.
+- Stores active jobs and alert/networking state in SQLite so the pipeline does not spam on reruns.
+- Queues new qualifying jobs for Discord alerts and networking enrichment.
+- Uses Tavily only for public LinkedIn discovery; it does not log into LinkedIn or automate a browser session.
+- Supports commissioning-only source checks, bootstrap alerts, and deep enrichment for a single job.
 
 ## Important LinkedIn note
 
-This project **does not log into, crawl, or automate LinkedIn**. Tavily searches the public web index for LinkedIn URLs and the bot gives you those links for manual review/outreach.
+This project does not log into LinkedIn, scrape private pages, or automate LinkedIn activity. It searches the public web index for public LinkedIn URLs and gives you those links for manual review and outreach.
 
-## Architecture
+## Current architecture
 
 ```text
-Company careers
-   |-- Workday
-   |-- Lever
-   |-- Greenhouse
-   `-- JSON-LD fallback
-            |
-            v
-       normalize Job
-            |
-            v
-      CE-fit scoring
-            |
-            v
-      SQLite dedupe
-            |
-       only NEW jobs
-        /          \
-       v            v
-Discord alert   Tavily Search
-                    |
-                    v
-          public LinkedIn URLs
-                    |
-                    v
-             rank outreach leads
-                    |
-                    v
-              Discord alert
+Company career source
+        |
+        v
+   source adapter
+        |
+        v
+  normalize job
+        |
+        v
+  CE relevance + target-year + US filter
+        |
+        v
+  SQLite dedupe + eligibility state
+        |
+   new eligible jobs
+        |----------------------|
+        v                      v
+ Discord alert queue      networking queue
+        |                      |
+        v                      v
+  Tavily public LinkedIn   public LinkedIn lead ranking
+      search / cache            |
+                             v
+                    Discord follow-ups if needed
 ```
 
-# Start here
+## Local setup
 
-## 1. Create a free Tavily API key
-
-Create an account at Tavily and copy your API key. Tavily currently includes 1,000 free API credits each month with no credit card required.
-
-This project deliberately uses `search_depth="basic"` and only **3 searches per new job** by default, so it stays lightweight. You can change the budget with `TAVILY_MAX_QUERIES`.
-
-## 2. Create a Discord webhook
-
-Create a private Discord channel, then:
-
-**Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL**
-
-## 3. Local setup on macOS
-
-Unzip the project, open Terminal, and run:
+### 1) Install dependencies
 
 ```bash
-cd path/to/internship_pipeline
+cd /path/to/internship_pipeline
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Open `.env` and fill in:
+### 2) Configure environment variables
+
+Open `.env` and set at least:
 
 ```env
 TAVILY_API_KEY=tvly-your-real-key-here
-TAVILY_MAX_QUERIES=3
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/your-real-webhook
 DB_PATH=data/jobs.db
 ```
 
-Do **not** commit `.env` to GitHub.
+The project also supports the following controls:
 
-## 4. Seed the database
+```env
+TAVILY_AUTO_SEARCH_KINDS=recruiter
+TAVILY_MAX_QUERIES=3
+TAVILY_MAX_CREDITS_PER_RUN=10
+TAVILY_DAILY_CREDIT_CAP=20
+TAVILY_CREDIT_RESERVE=250
+TAVILY_REQUIRE_USAGE_CHECK=true
+MAX_ALERTS_PER_RUN=20
+MAX_NETWORKING_JOBS_PER_RUN=20
+```
 
-First run:
+Do not commit `.env` to GitHub.
+
+## Supported source configuration
+
+The active roster lives in `config/companies.yaml`.
+
+### Current active companies
+
+The project currently enables a production-safe set of sources with `target_year: 2027` and `us_only: true`:
+
+```yaml
+companies:
+  - name: NVIDIA
+    enabled: true
+    type: workday
+    host: nvidia.wd5.myworkdayjobs.com
+    tenant: nvidia
+    site: NVIDIAExternalCareerSite
+    search_text: intern
+    target_year: 2027
+    us_only: true
+
+  - name: Qualcomm
+    enabled: true
+    type: eightfold
+    board_url: https://careers.qualcomm.com/careers
+    domain: qualcomm.com
+    query: intern
+    max_pages: 20
+    target_year: 2027
+    us_only: true
+
+  - name: Amazon
+    enabled: true
+    type: amazon
+    query: intern
+    country: USA
+    result_limit: 100
+    max_pages: 20
+    page_delay: 0.10
+    target_year: 2027
+    us_only: true
+
+  - name: Apple
+    enabled: true
+    type: apple
+    query: intern
+    locale: en-us
+    location_filter: postLocation-USA
+    team: STDNT
+    sub_team: INTRN
+    max_pages: 30
+    target_year: 2027
+    us_only: true
+```
+
+Additional values used by the pipeline include:
+
+- `type`: supported source adapter type (`workday`, `eightfold`, `amazon`, `apple`, `lever`, `greenhouse`, `generic`)
+- `target_year`: target internship cycle such as `2027`
+- `us_only`: whether the pipeline requires a US location before alerting or Tavily enrichment
+- `resolve_ambiguous_relevant`: used by Workday and related adapters for ambiguous-location handling
+- `staged_companies`: companies deliberately kept off the live roster until a stable adapter is validated
+
+## Common CLI commands
+
+### Pre-flight validation
+
+Validates that config, API keys, and DB state look healthy without sending Tavily Search or Discord requests.
+
+```bash
+python -m src.main --preflight
+```
+
+### Commission a source without side effects
+
+Fetches enabled source adapters with no DB writes, no Tavily spends, and no Discord messages.
+
+```bash
+python -m src.main --roster-check
+python -m src.main --roster-check --company "NVIDIA"
+```
+
+### Seed the database
+
+Stores current matches as a baseline without alerting on all of them.
 
 ```bash
 python -m src.main --seed
 ```
 
-This records internships that already exist without alerting you about all of them.
+### Normal run
 
-Then normal runs are:
+This is the main production loop.
 
 ```bash
 python -m src.main
 ```
 
-Only genuinely new relevant jobs should produce alerts.
+### Disable enrichment but keep scanning
 
-## 5. Test without Tavily or Discord
-
-The career-page portion works even if the API keys are blank:
+Useful for test/debug runs when only the source scan is needed.
 
 ```bash
 python -m src.main --no-enrich
 ```
 
-New jobs will print in Terminal instead of sending a Discord alert if `DISCORD_WEBHOOK_URL` is blank.
+### Deep enrichment for a single stored job
 
-## What Tavily searches for
+Runs an explicit paid job-specific search for a known active posting. `--include-uf` adds the UF-engineer query.
 
-For each newly discovered role, the enrichment stage uses up to three focused searches:
-
-```text
-site:linkedin.com/posts "NVIDIA" ("ASIC Design Intern" OR "JR12345")
-site:linkedin.com/in "NVIDIA" (recruiter OR "university recruiting" OR "early careers" OR "talent acquisition")
-site:linkedin.com/in "NVIDIA" ("University of Florida" OR UF) (engineer OR manager OR hardware OR firmware OR silicon OR verification)
+```bash
+python -m src.main --deep-enrich "NVIDIA" "REQ123456"
+python -m src.main --deep-enrich "NVIDIA" "REQ123456" --include-uf
 ```
 
-Tavily is restricted to `linkedin.com` results for this enrichment stage.
+### Bootstrap Discord alerts without Tavily
 
-## Configure companies
+Useful when you want to send current active qualifying roles once without any LinkedIn enrichment.
 
-Edit `config/companies.yaml`.
-
-### Workday
-
-```yaml
-- name: NVIDIA
-  enabled: true
-  type: workday
-  host: nvidia.wd5.myworkdayjobs.com
-  tenant: nvidia
-  site: NVIDIAExternalCareerSite
-  search_text: intern
+```bash
+python -m src.main --bootstrap-alerts
 ```
 
-### Lever
+### Bootstrap networking digests for already alerted jobs
 
-```yaml
-- name: ExampleCo
-  enabled: true
-  type: lever
-  site: exampleco
+This does a one-time recruiter-only enrichment digest for current qualifying alerted jobs.
+
+```bash
+python -m src.main --bootstrap-networking
 ```
 
-### Greenhouse
+## Tavily budget and search behavior
 
-```yaml
-- name: ExampleAI
-  enabled: true
-  type: greenhouse
-  board_token: exampleai
-```
+This project is intentionally conservative with Tavily usage.
 
-### Generic JSON-LD
+- The default auto-enrichment path is recruiter-only: `TAVILY_AUTO_SEARCH_KINDS=recruiter`
+- `exact_post` and `uf_engineer` are opt-in and are reached via `--deep-enrich`
+- `TAVILY_MAX_CREDITS_PER_RUN` controls the maximum per-run search budget
+- `TAVILY_DAILY_CREDIT_CAP` is the local rolling-24h cap enforced by the SQLite ledger
+- `TAVILY_CREDIT_RESERVE` keeps a protected reserve before a new search is allowed
+- `TAVILY_REQUIRE_USAGE_CHECK=true` enforces a fail-closed usage check before search requests
+- Search queries are constrained to LinkedIn domains; the project does not use broad public-web exploration
 
-```yaml
-- name: ExampleHardware
-  enabled: true
-  type: generic
-  url: https://example.com/careers
-```
+The code runs a usage guard before search requests and fails closed if the budget or usage data is unavailable or inconsistent.
 
-## Tune the Computer Engineering filter
+## How the filter works
 
-Edit `src/filtering.py`. High-value terms currently include:
+The Python filter in `src/filtering.py` looks for Computer Engineering and internship-relevant terms such as:
 
-- FPGA / ASIC / RTL / Verilog / SystemVerilog / VHDL
-- firmware / embedded
-- SoC / silicon / digital design / verification
-- computer architecture
-- GPU / CUDA / compiler
+- ASIC / FPGA / RTL / Verilog / SystemVerilog / VHDL
+- firmware / embedded / SoC / silicon / digital design / verification
+- GPU / CUDA / compiler / architecture
 - C/C++ / Linux / systems
+- engineering-heavy internship language
 
-Senior/staff/manager roles are penalized.
+The filter also respects target-year matching and penalizes senior/staff/manager-heavy titles.
 
-## Run tests
+## Running tests
+
+The project uses pytest for the current test suite.
+
+```bash
+python -m pytest -q
+```
+
+The legacy unittest command also still works:
 
 ```bash
 python -m unittest discover -s tests -v
@@ -191,29 +255,29 @@ python -m unittest discover -s tests -v
 
 ## GitHub Actions deployment
 
-Once local testing works:
+The pipeline is designed for hourly scheduled GitHub Actions runs.
 
-1. Push the repository to GitHub.
-2. Go to **Settings → Secrets and variables → Actions**.
-3. Add `TAVILY_API_KEY`.
-4. Add `DISCORD_WEBHOOK_URL`.
-5. Open **Actions → Internship Watch → Run workflow**.
-6. Set `seed = true` for that first cloud run.
-7. Scheduled runs then execute hourly (at minute 17). The first cloud run auto-seeds if no persisted state exists, preventing an alert storm.
+### Required repo secrets
 
-The workflow persists `jobs.db` on an orphan branch called `internship-state`, so GitHub Actions remembers which postings were already seen.
+Add these in GitHub:
 
-## Next build phase
+- `TAVILY_API_KEY`
+- `DISCORD_WEBHOOK_URL`
 
-The next useful layer is a small recruiting dashboard:
+### Workflow behavior
 
-`NEW → APPLYING → APPLIED → OUTREACH → RESPONSE → INTERVIEW → CLOSED`
+- Scheduled cadence: hourly at minute 17
+- First cloud run auto-seeds if no state database exists, preventing a flood of alerts
+- The workflow persists `jobs.db` on a branch such as `internship-state` so the bot remembers which jobs were already seen
+- The default cloud path is still `data/jobs.db` unless overridden with `DB_PATH`
 
-Each job can have a networking panel for:
+## Maintenance notes
 
-- employee who posted/shared the role
-- university recruiter
-- UF alumni
-- engineers on the likely team
-- possible hiring managers
-- outreach/follow-up status
+- If a company ATS adapter breaks, run `--roster-check` before touching persistent state.
+- If a job is not US-eligible, it is blocked before alerting or Tavily enrichment.
+- If the usage endpoint or local ledger fails, the pipeline stays safe by refusing to spend new credits.
+- Keep `config/companies.yaml` aligned with the current vendor source and target-year expectations before enabling new companies.
+
+## Project status
+
+This README reflects the current v5 codebase and command set. The project is intentionally focused on mission-safe, low-volume public-web internship monitoring rather than broad automation or private platform scraping.
