@@ -547,6 +547,247 @@ def bootstrap_alerts(config_path: str, threshold: float):
     finally:
         db.close()
 
+
+def bootstrap_networking(config_path: str, threshold: float):
+    """One-time recruiter enrichment for current delivered internship alerts.
+
+    Uses only the reusable company-level recruiter search.
+    Never performs exact-post or UF searches.
+    """
+    import requests
+    from src.models import Job
+
+    load_dotenv(ROOT / ".env")
+    db = JobDB(_db_path())
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+
+        configs = {
+            c["name"]: c
+            for c in cfg.get("companies", [])
+            if c.get("enabled", True)
+        }
+
+        key = os.getenv("TAVILY_API_KEY", "")
+        webhook = os.getenv("DISCORD_WEBHOOK_URL", "")
+
+        if not key:
+            raise SystemExit("TAVILY_API_KEY is missing")
+        if not webhook:
+            raise SystemExit("DISCORD_WEBHOOK_URL is missing")
+
+        rows = db.conn.execute(
+            """
+            SELECT j.company, j.external_id, j.title, j.location, j.url,
+                   j.source, j.posted_at, j.description, j.score
+            FROM jobs j
+            JOIN alert_queue q
+              ON q.company=j.company AND q.external_id=j.external_id
+            WHERE j.is_active=1
+              AND q.delivered_at IS NOT NULL
+            ORDER BY j.company, j.score DESC
+            """
+        ).fetchall()
+
+        grouped = {}
+
+        for row in rows:
+            job = Job(*row)
+            company_cfg = configs.get(job.company)
+
+            eligible, _ = _eligibility(job, company_cfg, threshold)
+            if not eligible:
+                continue
+
+            grouped.setdefault(job.company, []).append(job)
+
+        if not grouped:
+            print("No currently alerted eligible jobs found.")
+            return
+
+        # Bootstrap may NEVER exceed four new Tavily searches in one run,
+        # even if the normal configured per-run limit is higher.
+        configured_cap = int(os.getenv("TAVILY_MAX_CREDITS_PER_RUN", "4"))
+        bootstrap_cap = max(0, min(4, configured_cap))
+
+        budget = TavilyBudget(
+            key,
+            max_credits_per_run=bootstrap_cap,
+            local_daily_usage_getter=db.tavily_credits_used_last_24h,
+        )
+
+        # Process companies whose recruiter search is already cached first.
+        ordered = []
+
+        for company_name, jobs in grouped.items():
+            representative = jobs[0]
+            specs = selected_search_specs(
+                representative,
+                kinds=["recruiter"],
+            )
+
+            if not specs:
+                continue
+
+            spec = specs[0]
+            cached = db.get_cached_search(
+                spec.cache_key,
+                spec.ttl_hours,
+            ) is not None
+
+            ordered.append(
+                (0 if cached else 1, company_name, jobs)
+            )
+
+        ordered.sort(key=lambda x: (x[0], x[1]))
+
+        print("BOOTSTRAP NETWORKING")
+        print(f"Current qualifying companies: {len(ordered)}")
+        print(f"Maximum NEW Tavily credits this run: {bootstrap_cap}")
+        print("Search type: recruiter only")
+        print()
+
+        digests_sent = 0
+
+        for cache_order, company_name, jobs in ordered:
+            representative = jobs[0]
+
+            print(
+                f"{company_name}: "
+                f"{len(jobs)} current alert(s), "
+                f"{'cached recruiter search' if cache_order == 0 else 'recruiter search needed'}"
+            )
+
+            existing_recruiters = int(
+                db.conn.execute(
+                    """
+                    SELECT COUNT(DISTINCT result_url)
+                    FROM leads
+                    WHERE company=? AND kind='recruiter'
+                    """,
+                    (company_name,),
+                ).fetchone()[0]
+            )
+
+            if existing_recruiters:
+                print(
+                    f"  {existing_recruiters} recruiter lead(s) already stored; "
+                    "skipping new Tavily search"
+                )
+                continue
+
+            for job in jobs:
+                db.enqueue_networking(job)
+
+            outcome = search_linkedin_public_index_outcome(
+                representative,
+                db=db,
+                budget=budget,
+                kinds=["recruiter"],
+            )
+
+            if not outcome.completed:
+                reason = outcome.blocked_reason or "Tavily search deferred"
+
+                for job in jobs:
+                    db.mark_networking_deferred(job, reason)
+
+                print(f"  DEFERRED: {reason}")
+                continue
+
+            # Recruiter results are company-level, so attach the same
+            # qualified contacts to all current qualifying jobs at that company.
+            for job in jobs:
+                for lead in outcome.leads:
+                    db.add_lead(
+                        job,
+                        lead.url,
+                        lead.title,
+                        lead.snippet,
+                        lead.query,
+                        lead.kind,
+                    )
+
+                db.mark_networking_complete(job)
+
+            # Avoid sending the same company digest again on a rerun.
+            should_notify = any(
+                len(db.get_leads(job)) > db.networking_notified_count(job)
+                for job in jobs
+            )
+
+            if not outcome.leads:
+                print("  0 qualified recruiter leads")
+                continue
+
+            print(
+                f"  {len(outcome.leads)} qualified recruiter lead(s), "
+                f"{outcome.searches_used} new credit(s)"
+            )
+
+            if not should_notify:
+                print("  Discord already notified")
+                continue
+
+            lines = [
+                f"🔗 **{company_name} Networking Leads**",
+                f"Applies to {len(jobs)} current qualifying internship alert(s).",
+                "",
+            ]
+
+            for lead in outcome.leads[:8]:
+                name = lead.title or "LinkedIn profile"
+                lines.append(f"• **{name}** — {lead.url}")
+
+            lines.extend([
+                "",
+                "_These are company-level university recruiting / talent contacts, "
+                "not necessarily the hiring manager for a specific requisition._",
+            ])
+
+            message = "\n".join(lines)
+
+            r = requests.post(
+                webhook,
+                json={"content": message},
+                timeout=15,
+            )
+            r.raise_for_status()
+
+            for job in jobs:
+                db.set_networking_notified_count(
+                    job,
+                    len(db.get_leads(job)),
+                )
+
+            digests_sent += 1
+            print("  Discord networking digest sent")
+
+        remaining = budget.remaining_before_search
+        remaining_text = (
+            "unknown"
+            if remaining is None
+            else str(max(0, remaining - budget.spent_this_run))
+        )
+
+        print()
+        print("BOOTSTRAP NETWORKING COMPLETE")
+        print(f"New Tavily credits used: {budget.spent_this_run}")
+        print(f"Discord company digests sent: {digests_sent}")
+        print(
+            f"Local Tavily credits recorded last 24h: "
+            f"{db.tavily_credits_used_last_24h()}"
+        )
+        print(f"Estimated Tavily credits remaining: {remaining_text}")
+
+        if budget.block_reason:
+            print(f"Budget status: {budget.block_reason}")
+
+    finally:
+        db.close()
+
 def deep_enrich(config_path: str, company_name: str, external_id: str, include_uf: bool = False):
     """Explicit paid deep-search for one already stored US-eligible posting.
 
@@ -614,6 +855,7 @@ if __name__ == "__main__":
     parser.add_argument("--include-uf", action="store_true", help="Also spend/cache the UF-engineer search during --deep-enrich")
     parser.add_argument("--roster-check", action="store_true", help="Fetch enabled sources only; zero DB/Tavily/Discord side effects")
     parser.add_argument("--bootstrap-alerts", action="store_true", help="Send currently active qualifying jobs to Discord once; zero Tavily")
+    parser.add_argument("--bootstrap-networking", action="store_true", help="One-time recruiter enrichment for current Discord jobs")
     parser.add_argument("--company", help="Limit --roster-check to one company name")
     args = parser.parse_args()
     if args.preflight:
@@ -624,5 +866,7 @@ if __name__ == "__main__":
         deep_enrich(args.config, args.deep_enrich[0], args.deep_enrich[1], include_uf=args.include_uf)
     elif args.bootstrap_alerts:
         bootstrap_alerts(args.config, args.threshold)
+    elif args.bootstrap_networking:
+        bootstrap_networking(args.config, args.threshold)
     else:
         run(args.config, args.threshold, not args.no_enrich, seed=args.seed)

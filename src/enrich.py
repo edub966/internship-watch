@@ -247,7 +247,7 @@ def build_search_specs(job: Job) -> List[SearchSpec]:
         ),
         SearchSpec(
             kind="recruiter",
-            query=f"{company} United States university recruiting early careers talent acquisition recruiter internships",
+            query=f"{company} United States university recruiter",
             include_domains=("linkedin.com/in",),
             ttl_hours=24 * 14,
         ),
@@ -371,7 +371,21 @@ def _result_to_lead(job: Job, row: dict, spec: SearchSpec) -> Optional[Lead]:
         if not req_match and title_matches < 2:
             return None
     elif spec.kind == "recruiter":
-        if not any(t in hay for t in ("recruiter", "recruiting", "talent acquisition", "early careers")):
+        if not any(t in hay for t in (
+            "recruiter",
+            "recruiting",
+            "talent acquisition",
+            "early careers",
+            "early talent",
+            "university recruiting",
+            "university recruiter",
+            "university relations",
+            "university programs",
+            "university talent",
+            "campus recruiter",
+            "campus recruiting",
+            "student programs",
+        )):
             return None
     elif spec.kind == "uf_engineer":
         if "university of florida" not in hay and " uf " not in f" {hay} ":
