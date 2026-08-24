@@ -14,6 +14,7 @@ from src.sources.amazon import AmazonSource
 from src.sources.apple import AppleSource
 from src.sources.eightfold import EightfoldSource
 from src.sources.generic import GenericJsonLdSource
+from src.sources.google import GoogleSource
 from src.sources.greenhouse import GreenhouseSource
 from src.sources.lever import LeverSource
 from src.sources.workday import WorkdaySource
@@ -44,6 +45,8 @@ def build_source(cfg):
         )
     if t == "eightfold":
         return EightfoldSource(name, cfg["board_url"], cfg.get("domain", ""), cfg.get("query", "intern"), cfg.get("max_pages", 20))
+    if t == "google":
+        return GoogleSource(name, cfg.get("url") or cfg.get("board_url") or cfg.get("jobs_url"))
     if t == "lever":
         return LeverSource(name, cfg["site"])
     if t == "greenhouse":

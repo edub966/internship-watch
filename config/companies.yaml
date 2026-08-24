@@ -142,6 +142,16 @@ companies:
     target_year: 2027
     us_only: true
 
+  # Google exposes a stable public jobs callback payload that the commissioned
+  # adapter can process without a browser. This is now in the active roster.
+  - name: Google
+    enabled: true
+    type: google
+    query: intern
+    url: https://www.google.com/about/careers/applications/jobs/results/?location=United%20States&hl=en&jlo=en
+    target_year: 2027
+    us_only: true
+
 # These are desirable CE targets, but we intentionally do NOT enable them until
 # a stable, testable public career-source adapter is commissioned. Keeping them
 # staged is safer than pretending a brittle scraper is production-ready.
@@ -150,8 +160,6 @@ staged_companies:
     reason: Current Phenom careers site needs a dedicated stable adapter before activation.
   - name: Arm
     reason: Current careers search needs a dedicated validated adapter before activation.
-  - name: Google
-    reason: Current careers site does not expose a stable anonymous source we have commissioned yet.
   - name: Meta
     reason: Careers search is GraphQL/persisted-query based and requires a robust dedicated adapter.
   - name: Synopsys
