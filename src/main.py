@@ -167,10 +167,12 @@ def preflight(config_path: str):
     finally:
         db.close()
 
-    print(f"Automatic Tavily search kinds: {os.getenv('TAVILY_AUTO_SEARCH_KINDS', 'recruiter')}")
-    print(f"Per-run Tavily cap: {os.getenv('TAVILY_MAX_CREDITS_PER_RUN', '10')}")
-    print(f"Local rolling-24h Tavily cap: {os.getenv('TAVILY_DAILY_CREDIT_CAP', '20')}")
-    print(f"Protected Tavily reserve: {os.getenv('TAVILY_CREDIT_RESERVE', '250')}")
+    print(f"Automatic Tavily search kinds: {os.getenv('TAVILY_AUTO_SEARCH_KINDS', 'exact_post,recruiter')}")
+    print(f"Automatic exact-post author lookup: {os.getenv('TAVILY_AUTO_AUTHOR_LOOKUP', 'true')}")
+    print(f"Author profile lookups per job: {os.getenv('TAVILY_MAX_AUTHOR_LOOKUPS_PER_JOB', '2')}")
+    print(f"Per-run Tavily cap: {os.getenv('TAVILY_MAX_CREDITS_PER_RUN', '20')}")
+    print(f"Local rolling-24h Tavily cap: {os.getenv('TAVILY_DAILY_CREDIT_CAP', '60')}")
+    print(f"Protected Tavily reserve: {os.getenv('TAVILY_CREDIT_RESERVE', '100')}")
     print("Usage verification before search: " + os.getenv("TAVILY_REQUIRE_USAGE_CHECK", "true"))
     print("Queue revalidation before Tavily/Discord: enabled")
 
@@ -425,7 +427,7 @@ def run(config_path: str, threshold: float, enrich: bool, seed: bool = False):
         # immediately before Tavily, so non-US/ambiguous/stale-cycle jobs cannot
         # consume credits even if they somehow exist in the queue.
         if enrich and budget is not None:
-            networking_jobs = db.networking_due_jobs(int(os.getenv("MAX_NETWORKING_JOBS_PER_RUN", "20")))
+            networking_jobs = db.networking_due_jobs(int(os.getenv("MAX_NETWORKING_JOBS_PER_RUN", "30")))
             if networking_jobs:
                 print(f"Networking jobs due: {len(networking_jobs)}")
             for job in networking_jobs:
@@ -440,7 +442,7 @@ def run(config_path: str, threshold: float, enrich: bool, seed: bool = False):
                     outcome = search_linkedin_public_index_outcome(job, db=db, budget=budget)
                     new_lead_count = 0
                     for lead in outcome.leads:
-                        if db.add_lead(job, lead.url, lead.title, lead.snippet, lead.query, lead.kind):
+                        if db.add_lead_record(job, lead):
                             new_lead_count += 1
 
                     if outcome.completed:
@@ -656,7 +658,7 @@ def bootstrap_networking(config_path: str, threshold: float):
 
         # Bootstrap may NEVER exceed four new Tavily searches in one run,
         # even if the normal configured per-run limit is higher.
-        configured_cap = int(os.getenv("TAVILY_MAX_CREDITS_PER_RUN", "4"))
+        configured_cap = int(os.getenv("TAVILY_MAX_CREDITS_PER_RUN", "20"))
         bootstrap_cap = max(0, min(4, configured_cap))
 
         budget = TavilyBudget(
@@ -748,14 +750,7 @@ def bootstrap_networking(config_path: str, threshold: float):
             # qualified contacts to all current qualifying jobs at that company.
             for job in jobs:
                 for lead in outcome.leads:
-                    db.add_lead(
-                        job,
-                        lead.url,
-                        lead.title,
-                        lead.snippet,
-                        lead.query,
-                        lead.kind,
-                    )
+                    db.add_lead_record(job, lead)
 
                 db.mark_networking_complete(job)
 
@@ -838,9 +833,9 @@ def bootstrap_networking(config_path: str, threshold: float):
 def deep_enrich(config_path: str, company_name: str, external_id: str, include_uf: bool = False):
     """Explicit paid deep-search for one already stored US-eligible posting.
 
-    Automatic runs use only reusable recruiter searches. This command is the
-    opt-in path for a job-specific LinkedIn post search; UF alumni lookup is an
-    additional opt-in because it was low-yield in validation.
+    Automatic runs already use exact-post, post-author, and reusable recruiter
+    searches. This command reruns that path for a selected job; UF alumni lookup
+    is an additional opt-in because it is broader and historically lower-yield.
     """
     load_dotenv(ROOT / ".env")
     db = JobDB(_db_path())
@@ -876,7 +871,7 @@ def deep_enrich(config_path: str, company_name: str, external_id: str, include_u
         budget = TavilyBudget(key, local_daily_usage_getter=db.tavily_credits_used_last_24h)
         outcome = search_linkedin_public_index_outcome(job, db=db, budget=budget, kinds=kinds)
         for lead in outcome.leads:
-            db.add_lead(job, lead.url, lead.title, lead.snippet, lead.query, lead.kind)
+            db.add_lead_record(job, lead)
 
         print(f"Deep enrich: {job.company} — {job.title}")
         print(f"Search kinds: {', '.join(kinds)}")
@@ -898,7 +893,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-enrich", action="store_true")
     parser.add_argument("--seed", action="store_true", help="Store current matches without alerting")
     parser.add_argument("--preflight", action="store_true", help="Validate setup without Tavily Search or Discord")
-    parser.add_argument("--deep-enrich", nargs=2, metavar=("COMPANY", "REQ"), help="Opt-in exact-post enrichment for one stored job")
+    parser.add_argument("--deep-enrich", nargs=2, metavar=("COMPANY", "REQ"), help="Rerun exact-post, author, and recruiter enrichment for one stored job")
     parser.add_argument("--include-uf", action="store_true", help="Also spend/cache the UF-engineer search during --deep-enrich")
     parser.add_argument("--roster-check", action="store_true", help="Fetch enabled sources only; zero DB/Tavily/Discord side effects")
     parser.add_argument("--bootstrap-alerts", action="store_true", help="Send currently active qualifying jobs to Discord once; zero Tavily")

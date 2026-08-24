@@ -1,8 +1,9 @@
 import yaml
 
 import src.main as main
-from src.alerts import format_match_details
+from src.alerts import _lead_section, format_match_details
 from src.db import JobDB
+from src.enrich import Lead
 from src.models import Job
 
 
@@ -89,3 +90,22 @@ def test_graduate_only_job_never_alerts_or_triggers_enrichment(monkeypatch, tmp_
     assert db.pending_alert_count() == 0
     assert db.conn.execute("SELECT COUNT(*) FROM networking_queue").fetchone()[0] == 0
     db.close()
+
+
+def test_networking_alert_distinguishes_recruiter_author_and_affiliations():
+    lead = Lead(
+        url="https://www.linkedin.com/in/alice-example",
+        title="Alice Example - University Recruiter at NVIDIA",
+        snippet="",
+        query="q",
+        kind="post_author",
+        author_name="Alice Example",
+        connection_type="recruiter",
+        affiliations=("UF", "PIKE"),
+        source_post_url="https://www.linkedin.com/posts/alice-example_activity-1",
+    )
+    section = _lead_section([lead])
+    assert "People who posted this job" in section
+    assert "Alice Example" in section
+    assert "Recruiter · UF · PIKE" in section
+    assert "Posted: https://www.linkedin.com/posts/" in section

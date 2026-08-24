@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS leads (
     snippet TEXT,
     query TEXT,
     kind TEXT DEFAULT 'other',
+    score REAL DEFAULT 0,
+    role_bucket TEXT DEFAULT '',
+    author_name TEXT DEFAULT '',
+    author_profile_url TEXT DEFAULT '',
+    connection_type TEXT DEFAULT 'potential_connection',
+    affiliations TEXT DEFAULT '[]',
+    source_post_url TEXT DEFAULT '',
+    relevance_reason TEXT DEFAULT '',
     discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (company, external_id, result_url)
 );
@@ -99,6 +107,20 @@ class JobDB:
         columns = {row[1] for row in self.conn.execute("PRAGMA table_info(leads)").fetchall()}
         if "kind" not in columns:
             self.conn.execute("ALTER TABLE leads ADD COLUMN kind TEXT DEFAULT 'other'")
+        lead_columns = {
+            "score": "REAL DEFAULT 0",
+            "role_bucket": "TEXT DEFAULT ''",
+            "author_name": "TEXT DEFAULT ''",
+            "author_profile_url": "TEXT DEFAULT ''",
+            "connection_type": "TEXT DEFAULT 'potential_connection'",
+            "affiliations": "TEXT DEFAULT '[]'",
+            "source_post_url": "TEXT DEFAULT ''",
+            "relevance_reason": "TEXT DEFAULT ''",
+        }
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(leads)").fetchall()}
+        for name, declaration in lead_columns.items():
+            if name not in columns:
+                self.conn.execute(f"ALTER TABLE leads ADD COLUMN {name} {declaration}")
 
     def record_tavily_credit(self, company: str, kind: str, cache_key: str = ""):
         """Conservatively log a Tavily Search attempt before the request is sent."""
@@ -385,25 +407,102 @@ class JobDB:
         from src.enrich import Lead
         rows = self.conn.execute(
             """
-            SELECT result_url, title, snippet, query, kind
+            SELECT result_url, title, snippet, query, kind, score, role_bucket,
+                   author_name, author_profile_url, connection_type, affiliations,
+                   source_post_url, relevance_reason
             FROM leads
             WHERE company=? AND external_id=?
-            ORDER BY discovered_at ASC
+            ORDER BY score DESC, discovered_at ASC
             """,
             (job.company, job.external_id),
         ).fetchall()
-        return [Lead(url=r[0], title=r[1] or "", snippet=r[2] or "", query=r[3] or "", kind=r[4] or "other") for r in rows]
+        leads = []
+        for row in rows:
+            try:
+                affiliations = json.loads(row[10] or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                affiliations = []
+            leads.append(Lead(
+                url=row[0], title=row[1] or "", snippet=row[2] or "",
+                query=row[3] or "", kind=row[4] or "other", score=float(row[5] or 0),
+                role_bucket=row[6] or "", author_name=row[7] or "",
+                author_profile_url=row[8] or "", connection_type=row[9] or "potential_connection",
+                affiliations=tuple(affiliations) if isinstance(affiliations, list) else (),
+                source_post_url=row[11] or "", relevance_reason=row[12] or "",
+            ))
+        return leads
 
-    def add_lead(self, job: Job, result_url: str, title: str, snippet: str, query: str, kind: str = "other"):
+    def add_lead(
+        self,
+        job: Job,
+        result_url: str,
+        title: str,
+        snippet: str,
+        query: str,
+        kind: str = "other",
+        *,
+        score: float = 0.0,
+        role_bucket: str = "",
+        author_name: str = "",
+        author_profile_url: str = "",
+        connection_type: str = "potential_connection",
+        affiliations=(),
+        source_post_url: str = "",
+        relevance_reason: str = "",
+    ):
         cur = self.conn.execute(
             """
-            INSERT OR IGNORE INTO leads(company, external_id, result_url, title, snippet, query, kind)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO leads(
+                company, external_id, result_url, title, snippet, query, kind,
+                score, role_bucket, author_name, author_profile_url, connection_type,
+                affiliations, source_post_url, relevance_reason
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (job.company, job.external_id, result_url, title, snippet, query, kind),
+            (
+                job.company, job.external_id, result_url, title, snippet, query, kind,
+                float(score or 0), role_bucket, author_name, author_profile_url,
+                connection_type, json.dumps(list(affiliations or ())), source_post_url,
+                relevance_reason,
+            ),
         )
+        inserted = cur.rowcount == 1
+        if not inserted:
+            self.conn.execute(
+                """
+                UPDATE leads SET
+                    title=?, snippet=?, query=?, kind=?, score=?, role_bucket=?,
+                    author_name=?, author_profile_url=?, connection_type=?, affiliations=?,
+                    source_post_url=?, relevance_reason=?
+                WHERE company=? AND external_id=? AND result_url=?
+                """,
+                (
+                    title, snippet, query, kind, float(score or 0), role_bucket,
+                    author_name, author_profile_url, connection_type,
+                    json.dumps(list(affiliations or ())), source_post_url, relevance_reason,
+                    job.company, job.external_id, result_url,
+                ),
+            )
         self.conn.commit()
-        return cur.rowcount == 1
+        return inserted
+
+    def add_lead_record(self, job: Job, lead) -> bool:
+        return self.add_lead(
+            job,
+            lead.url,
+            lead.title,
+            lead.snippet,
+            lead.query,
+            lead.kind,
+            score=lead.score,
+            role_bucket=lead.role_bucket,
+            author_name=lead.author_name,
+            author_profile_url=lead.author_profile_url,
+            connection_type=lead.connection_type,
+            affiliations=lead.affiliations,
+            source_post_url=lead.source_post_url,
+            relevance_reason=lead.relevance_reason,
+        )
 
     def get_cached_search(self, cache_key: str, ttl_hours: int):
         row = self.conn.execute(

@@ -81,14 +81,17 @@ DB_PATH=data/jobs.db
 The project also supports the following controls:
 
 ```env
-TAVILY_AUTO_SEARCH_KINDS=recruiter
-TAVILY_MAX_QUERIES=3
-TAVILY_MAX_CREDITS_PER_RUN=10
-TAVILY_DAILY_CREDIT_CAP=20
-TAVILY_CREDIT_RESERVE=250
+TAVILY_AUTO_SEARCH_KINDS=exact_post,recruiter
+TAVILY_AUTO_AUTHOR_LOOKUP=true
+TAVILY_MAX_AUTHOR_LOOKUPS_PER_JOB=2
+TAVILY_MAX_QUERIES=2
+TAVILY_MAX_CREDITS_PER_RUN=20
+TAVILY_DAILY_CREDIT_CAP=60
+TAVILY_CREDIT_RESERVE=100
 TAVILY_REQUIRE_USAGE_CHECK=true
+TAVILY_MAX_LEADS_PER_JOB=14
 MAX_ALERTS_PER_RUN=20
-MAX_NETWORKING_JOBS_PER_RUN=20
+MAX_NETWORKING_JOBS_PER_RUN=30
 EXPECTED_GRAD_YEAR=2029
 CANDIDATE_SPECIAL_PROGRAM_ELIGIBLE=false
 ```
@@ -221,14 +224,21 @@ python -m src.main --bootstrap-networking
 
 ## Tavily budget and search behavior
 
-This project is intentionally conservative with Tavily usage.
+This project uses Tavily liberally for qualified jobs while retaining hard usage safety.
 
-- The default auto-enrichment path is recruiter-only: `TAVILY_AUTO_SEARCH_KINDS=recruiter`
-- `exact_post` and `uf_engineer` are opt-in and are reached via `--deep-enrich`
+- The default path runs `exact_post` first and then the reusable `recruiter` search.
+- Exact-post searches use company, title, and requisition ID and request up to 10 LinkedIn posts for one basic-search credit.
+- When post authors can be extracted confidently, at most two cached author-profile lookups run per job by default.
+- A fully uncached job therefore costs at most four searches: exact post, two author profiles, and recruiter; cache hits reduce that cost.
+- Author profiles are distinguished as recruiter, technical connection, or potential connection; the original post remains linked.
+- University of Florida and Pi Kappa Alpha evidence is tagged as `UF` and `PIKE` and receives a ranking bonus.
+- Company/role recruiter and author-profile searches are cached for 14 days; exact-post searches are cached for 18 hours.
+- `uf_engineer` remains opt-in through `--deep-enrich --include-uf`.
 - `TAVILY_MAX_CREDITS_PER_RUN` controls the maximum per-run search budget
 - `TAVILY_DAILY_CREDIT_CAP` is the local rolling-24h cap enforced by the SQLite ledger
 - `TAVILY_CREDIT_RESERVE` keeps a protected reserve before a new search is allowed
 - `TAVILY_REQUIRE_USAGE_CHECK=true` enforces a fail-closed usage check before search requests
+- Balanced per-kind quotas prevent job posts from crowding recruiter/profile results out of alerts.
 - Search queries are constrained to LinkedIn domains; the project does not use broad public-web exploration
 
 The code runs a usage guard before search requests and fails closed if the budget or usage data is unavailable or inconsistent.

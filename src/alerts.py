@@ -10,9 +10,25 @@ from src.models import Job
 
 _KIND_LABELS = {
     "exact_post": "Posting-specific LinkedIn posts",
+    "post_author": "People who posted this job",
     "recruiter": "Recruiting contacts",
     "uf_engineer": "UF / technical contacts",
     "other": "Other leads",
+}
+
+_CONNECTION_LABELS = {
+    "recruiter": "Recruiter",
+    "technical_connection": "Technical connection",
+    "job_poster": "Job poster — role unverified",
+    "potential_connection": "Potential connection",
+}
+
+_KIND_LIMITS = {
+    "exact_post": 4,
+    "post_author": 2,
+    "recruiter": 6,
+    "uf_engineer": 3,
+    "other": 2,
 }
 
 _SECTOR_LABELS = {
@@ -32,18 +48,24 @@ def _lead_section(leads: List[Lead]) -> str:
     if not leads:
         return ""
     grouped = {}
-    for lead in leads[:8]:
+    for lead in leads:
         grouped.setdefault(lead.kind, []).append(lead)
 
     sections = []
-    for kind in ("exact_post", "recruiter", "uf_engineer", "other"):
+    for kind in ("exact_post", "post_author", "recruiter", "uf_engineer", "other"):
         rows = grouped.get(kind, [])
         if not rows:
             continue
         lines = []
-        for lead in rows[:3]:
-            label = (lead.title or "LinkedIn result")[:90]
-            lines.append(f"• {label}\n{lead.url}")
+        for lead in rows[:_KIND_LIMITS[kind]]:
+            label = (lead.author_name or lead.title or "LinkedIn result")[:90]
+            badges = [_CONNECTION_LABELS.get(lead.connection_type, "Potential connection")]
+            badges.extend(lead.affiliations)
+            detail = " · ".join(dict.fromkeys(badges))
+            line = f"• **{label}** — {detail}\n{lead.url}"
+            if lead.kind == "post_author" and lead.source_post_url:
+                line += f"\nPosted: {lead.source_post_url}"
+            lines.append(line)
         sections.append(f"**{_KIND_LABELS[kind]}**\n" + "\n".join(lines))
     return "\n\n".join(sections)
 

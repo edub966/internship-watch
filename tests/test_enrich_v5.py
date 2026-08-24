@@ -78,12 +78,12 @@ def test_company_searches_are_cached(monkeypatch, tmp_path):
         require_usage_check=True, usage_getter=_usage,
     )
     search_linkedin_public_index(_job(), db=db, budget=budget, client=client)
-    assert len(client.calls) == 3
+    assert len(client.calls) == 4  # three requested kinds + one exact-post author lookup
 
     # Same job within cache TTL should cost zero more search calls.
     search_linkedin_public_index(_job(), db=db, budget=budget, client=client)
-    assert len(client.calls) == 3
-    assert budget.spent_this_run == 3
+    assert len(client.calls) == 4
+    assert budget.spent_this_run == 4
     db.close()
 
 
@@ -184,11 +184,11 @@ def test_exact_query_does_not_duplicate_company_prefix():
     assert "United States" in specs[1].query
 
 
-def test_default_auto_policy_is_recruiter_only(monkeypatch):
+def test_default_auto_policy_is_exact_post_then_recruiter(monkeypatch):
     monkeypatch.delenv("TAVILY_AUTO_SEARCH_KINDS", raising=False)
     from src.enrich import selected_search_specs
     specs = selected_search_specs(_job())
-    assert [s.kind for s in specs] == ["recruiter"]
+    assert [s.kind for s in specs] == ["exact_post", "recruiter"]
 
 
 def test_manual_kinds_can_request_exact_without_uf():

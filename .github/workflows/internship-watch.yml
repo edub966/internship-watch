@@ -44,13 +44,16 @@ jobs:
       - name: Scan jobs and deliver queued alerts
         env:
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-          TAVILY_AUTO_SEARCH_KINDS: "recruiter"
-          TAVILY_MAX_QUERIES: "1"
-          TAVILY_MAX_CREDITS_PER_RUN: "4"
-          TAVILY_DAILY_CREDIT_CAP: "8"
-          TAVILY_CREDIT_RESERVE: "250"
+          TAVILY_AUTO_SEARCH_KINDS: "exact_post,recruiter"
+          TAVILY_AUTO_AUTHOR_LOOKUP: "true"
+          TAVILY_MAX_AUTHOR_LOOKUPS_PER_JOB: "2"
+          TAVILY_MAX_QUERIES: "2"
+          TAVILY_MAX_CREDITS_PER_RUN: "20"
+          TAVILY_DAILY_CREDIT_CAP: "60"
+          TAVILY_CREDIT_RESERVE: "100"
           TAVILY_REQUIRE_USAGE_CHECK: "true"
-          MAX_NETWORKING_JOBS_PER_RUN: "20"
+          TAVILY_MAX_LEADS_PER_JOB: "14"
+          MAX_NETWORKING_JOBS_PER_RUN: "30"
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DB_PATH: data/jobs.db
           SEED: ${{ github.event.inputs.seed }}
