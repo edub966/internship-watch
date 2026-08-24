@@ -68,7 +68,8 @@ NON_TECH_TITLE_TERMS = [
 SECTOR_KEYWORDS = {
     "hardware": {
         "asic": 18, "rtl": 18, "verilog": 17, "systemverilog": 18, "fpga": 16,
-        "vlsi": 16, "digital design": 18, "verification": 12, "validation": 12,
+        "vlsi": 16, "digital design": 18, "digital circuit design": 18,
+        "circuit design": 14, "verification": 12, "validation": 12,
         "hardware": 10, "computer architecture": 20, "microarchitecture": 17,
         "cpu": 10, "gpu": 8, "memory hierarchy": 12, "cache": 9, "soc": 12,
         "silicon": 11, "semiconductor": 12, "dft": 14, "physical design": 15,
@@ -87,7 +88,7 @@ SECTOR_KEYWORDS = {
     "data_ml": {
         "data science": 18, "machine learning": 18, "ml engineer": 18,
         "deep learning": 18, "artificial intelligence": 17, "ai": 14,
-        "applied scientist": 16, "nvidia": 5, "python": 9, "sql": 8,
+        "applied scientist": 16, "python": 9, "sql": 8,
         "pandas": 10, "numpy": 10, "scikit": 9, "xgboost": 12,
         "pytorch": 12, "tensorflow": 12, "recommendation": 10,
         "computer vision": 12, "nlp": 12, "optimization": 8,
@@ -120,12 +121,26 @@ def _text(job: Job) -> tuple[str, str]:
     return title, clean_html(text)
 
 
+def _contains_term(text: str, term: str) -> bool:
+    """Match a keyword as a token and allow a simple plural where useful.
+
+    Plain substring checks make ``ai`` match ``paid`` and ``intern`` match
+    ``internal``. Non-word boundaries also work for technical tokens such as
+    C++ and C/C++.
+    """
+    value = str(term or "").strip().lower()
+    if not value:
+        return False
+    plural = "s?" if value.isalpha() else ""
+    return bool(re.search(rf"(?<![a-z0-9]){re.escape(value)}{plural}(?![a-z0-9])", text.lower()))
+
+
 def _fit_points(job: Job) -> float:
     title, text = _text(job)
     fit = 0.0
     for term, weight in CE_TERMS.items():
-        if term in text:
-            fit += weight * (1.5 if term in title else 1.0)
+        if _contains_term(text, term):
+            fit += weight * (1.5 if _contains_term(title, term) else 1.0)
     return fit
 
 
@@ -156,7 +171,7 @@ def evaluate_eligibility(job: Job, candidate_graduation_year: int | None = None)
     candidate_grad = candidate_graduation_year or int(os.getenv("EXPECTED_GRAD_YEAR", "2029"))
 
     # Internship / job-type gate.
-    if not any(term in text for term in INTERNSHIP_TERMS):
+    if not any(_contains_term(text, term) for term in INTERNSHIP_TERMS):
         status = "ineligible"
         reasons.append("no internship or student term detected")
         return EligibilityResult(status=status, reasons=reasons, confidence=0.98,
@@ -184,6 +199,20 @@ def evaluate_eligibility(job: Job, candidate_graduation_year: int | None = None)
             reasons.append("non-intern role detected")
             break
 
+    allows_undergrad = bool(re.search(r"\b(?:undergrad|bachelor'?s?|undergraduate|bs\b|b\.s\.)\b", text, re.I))
+    graduate_only_title_patterns = [
+        r"\bph\.?d\.?\b",
+        r"\bdoctoral\b",
+        r"\bmaster(?:'s|s)\b",
+        r"\bm\.?s\.?\b",
+        r"\bmba\b",
+        r"\bgraduate[- ](?:degree|student|research)",
+    ]
+    if any(re.search(pattern, title, re.I) is not None for pattern in graduate_only_title_patterns):
+        if not allows_undergrad:
+            status = "ineligible"
+            reasons.append("graduate-degree-only internship title")
+
     graduate_only_patterns = [
         r"\bph\.?d\.?\s+(?:degree\s+)?required\b",
         r"\bdoctoral\s+degree\s+required\b",
@@ -195,7 +224,6 @@ def evaluate_eligibility(job: Job, candidate_graduation_year: int | None = None)
         r"\bmaster'?s?\s+students?\s+only\b",
         r"\bmasters?\s+students?\s+only\b",
     ]
-    allows_undergrad = bool(re.search(r"\b(?:undergrad|bachelor'?s?|undergraduate|bs\b|b\.s\.)\b", text, re.I))
     if any(re.search(pattern, text, re.I) is not None for pattern in graduate_only_patterns):
         if not allows_undergrad:
             status = "ineligible"
@@ -227,7 +255,11 @@ def evaluate_eligibility(job: Job, candidate_graduation_year: int | None = None)
             status = "ineligible"
             reasons.append("special program excluded by candidate configuration")
 
-    if status == "eligible" and not re.search(r"\b(?:undergrad|bachelor'?s?|undergraduate|bs\b|b\.s\.|master'?s?|ms\b|m\.s\.|ph\.?d\.?|doctoral)\b", text, re.I):
+    if status == "eligible" and not re.search(
+        r"\b(?:undergrad|bachelor'?s?|undergraduate|bs\b|b\.s\.|master(?:'s|s)|ms\b|m\.s\.|ph\.?d\.?|doctoral)\b",
+        text,
+        re.I,
+    ):
         status = "uncertain"
         reasons.append("degree requirement not explicit")
 
@@ -242,7 +274,9 @@ def evaluate_eligibility(job: Job, candidate_graduation_year: int | None = None)
         status=status,
         reasons=reasons,
         confidence=confidence,
-        degree_match=not any(re.search(p, text, re.I) is not None for p in [
+        degree_match=allows_undergrad or not any(re.search(p, text, re.I) is not None for p in [
+            r"\bph\.?d\.?\b.*\bintern",
+            r"\bmaster(?:'s|s)\b.*\bintern",
             r"\bmaster'?s?\s+degree\s+required\b",
             r"\bph\.?d\.?\s+students?\s+only\b",
             r"\bgraduate\s+students?\s+only\b",
@@ -269,10 +303,10 @@ def score_sector_fit(job: Job) -> dict[str, float]:
     for sector, terms in SECTOR_KEYWORDS.items():
         score = 0.0
         for term, weight in terms.items():
-            if term in text:
+            if _contains_term(text, term):
                 score += weight
         if sector == "hardware":
-            if "hardware" in text or "computer architecture" in text:
+            if _contains_term(text, "hardware") or _contains_term(text, "computer architecture"):
                 score += 8
         sector_scores[sector] = round(score, 2)
     return sector_scores
@@ -281,7 +315,7 @@ def score_sector_fit(job: Job) -> dict[str, float]:
 def relevance_score(job: Job, target_year: int | None = None) -> float:
     title, text = _text(job)
 
-    if not any(term in text for term in INTERNSHIP_TERMS):
+    if not any(_contains_term(text, term) for term in INTERNSHIP_TERMS):
         return -20.0
     if not matches_target_year(job, target_year):
         return -30.0
@@ -300,7 +334,7 @@ def relevance_score(job: Job, target_year: int | None = None) -> float:
         if term in text:
             score += weight
 
-    if any(term in title for term in NON_TECH_TITLE_TERMS):
+    if any(_contains_term(title, term) for term in NON_TECH_TITLE_TERMS):
         score -= 20
 
     if re.search(r"\bUS\b|United States|, [A-Z]{2}\b", job.location or ""):
@@ -312,7 +346,7 @@ def relevance_score(job: Job, target_year: int | None = None) -> float:
 def is_relevant(job: Job, threshold: float = 12.0, target_year: int | None = None) -> bool:
     _, text = _text(job)
 
-    if not any(term in text for term in INTERNSHIP_TERMS):
+    if not any(_contains_term(text, term) for term in INTERNSHIP_TERMS):
         job.score = -20.0
         return False
 

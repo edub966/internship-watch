@@ -103,7 +103,7 @@ def _classify_one(location: str, source_type: str = "") -> LocationDecision:
     if final in CANADIAN_PROVINCE_CODES:
         return LocationDecision(NON_US, f"Canadian province code: {final}")
 
-    if source_type in {"workday", "greenhouse", "lever"}:
+    if source_type in {"workday", "greenhouse", "lever", "smartrecruiters"}:
         if final in US_STATE_CODES:
             return LocationDecision(US, f"US state/territory code: {final}")
         low = raw.lower()

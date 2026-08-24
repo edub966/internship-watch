@@ -4,6 +4,7 @@ from typing import List
 import requests
 
 from src.enrich import Lead
+from src.filtering import evaluate_eligibility, score_sector_fit
 from src.models import Job
 
 
@@ -12,6 +13,18 @@ _KIND_LABELS = {
     "recruiter": "Recruiting contacts",
     "uf_engineer": "UF / technical contacts",
     "other": "Other leads",
+}
+
+_SECTOR_LABELS = {
+    "hardware": "Hardware / Architecture",
+    "swe": "SWE / Systems",
+    "data_ml": "Data / ML / AI",
+}
+
+_RESUME_LABELS = {
+    "hardware": "Hardware",
+    "swe": "SWE",
+    "data_ml": "Data/ML",
 }
 
 
@@ -35,10 +48,43 @@ def _lead_section(leads: List[Lead]) -> str:
     return "\n\n".join(sections)
 
 
+def format_match_details(job: Job) -> str:
+    """Format candidate eligibility and sector fit for alert consumers."""
+    eligibility = evaluate_eligibility(job)
+    if eligibility.status == "eligible":
+        eligibility_line = "Eligibility: ✅ Eligible"
+    elif eligibility.status == "uncertain":
+        eligibility_line = "Eligibility: ⚠️ Verify"
+    else:
+        eligibility_line = "Eligibility: ❌ Ineligible"
+
+    reason_line = ""
+    if eligibility.reasons:
+        reason_line = "\nReason: " + "; ".join(eligibility.reasons)[:300]
+
+    scores = score_sector_fit(job)
+    primary_sector = max(scores, key=scores.get)
+    score_lines = "\n".join(
+        f"{_SECTOR_LABELS[sector]}: {score:g}"
+        for sector, score in scores.items()
+    )
+    return (
+        f"{eligibility_line}{reason_line}\n"
+        f"Primary track: {_SECTOR_LABELS[primary_sector]}\n"
+        f"Recommended resume: {_RESUME_LABELS[primary_sector]}\n"
+        f"Overall fit: {job.score:g}\n"
+        f"Fit by track\n{score_lines}"
+    )
+
+
 def discord_alert(job: Job, leads: List[Lead], enrichment_note: str = "") -> None:
+    match_details = format_match_details(job)
     webhook = os.getenv("DISCORD_WEBHOOK_URL")
     if not webhook:
-        print(f"\nNEW: {job.company} | {job.title} | {job.location}\n{job.url}")
+        print(
+            f"\nNEW: {job.company} | {job.title} | {job.location}\n"
+            f"{match_details}\n{job.url}"
+        )
         for lead in leads[:5]:
             print(f"  - [{lead.kind} {lead.score:.0f}] {lead.title}\n    {lead.url}")
         if enrichment_note:
@@ -49,8 +95,8 @@ def discord_alert(job: Job, leads: List[Lead], enrichment_note: str = "") -> Non
         f"**{job.company} — {job.title}**\n"
         f"Req: {job.external_id}\n"
         f"Location: {job.location or 'Not listed'}\n"
+        f"{match_details}\n"
         f"Posted: {job.posted_at or 'Not listed'}\n"
-        f"Fit score: {job.score}\n"
         f"Apply: {job.url}"
     )
     lead_text = _lead_section(leads)

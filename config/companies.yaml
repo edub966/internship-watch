@@ -1,9 +1,11 @@
-# v5.6 active roster: sources below use public career-site endpoints that the
+# Active roster: sources below use public career-site endpoints that the
 # pipeline can commission with --roster-check before touching the database.
 # Every active company is target-cycle 2027 and US-only for alerts/Tavily.
 companies:
   - name: NVIDIA
     enabled: true
+    company_tier: A
+    priority_sectors: [hardware, swe, data_ml]
     type: workday
     host: nvidia.wd5.myworkdayjobs.com
     tenant: nvidia
@@ -14,6 +16,8 @@ companies:
 
   - name: Qualcomm
     enabled: true
+    company_tier: A
+    priority_sectors: [hardware, swe, data_ml]
     type: eightfold
     board_url: https://careers.qualcomm.com/careers
     domain: qualcomm.com
@@ -24,6 +28,8 @@ companies:
 
   - name: Intel
     enabled: true
+    company_tier: A
+    priority_sectors: [hardware, swe, data_ml]
     type: workday
     host: intel.wd1.myworkdayjobs.com
     tenant: intel
@@ -34,6 +40,8 @@ companies:
 
   - name: Broadcom
     enabled: true
+    company_tier: A
+    priority_sectors: [hardware, swe]
     type: workday
     host: broadcom.wd1.myworkdayjobs.com
     tenant: broadcom
@@ -44,6 +52,8 @@ companies:
 
   - name: Analog Devices
     enabled: true
+    company_tier: B
+    priority_sectors: [hardware, swe]
     type: workday
     host: analogdevices.wd1.myworkdayjobs.com
     tenant: analogdevices
@@ -54,6 +64,8 @@ companies:
 
   - name: Cadence
     enabled: true
+    company_tier: B
+    priority_sectors: [hardware, swe]
     type: workday
     host: cadence.wd1.myworkdayjobs.com
     tenant: cadence
@@ -64,6 +76,8 @@ companies:
 
   - name: Marvell
     enabled: true
+    company_tier: B
+    priority_sectors: [hardware, swe]
     type: workday
     host: marvell.wd1.myworkdayjobs.com
     tenant: marvell
@@ -74,6 +88,8 @@ companies:
 
   - name: Micron
     enabled: true
+    company_tier: A
+    priority_sectors: [hardware, swe, data_ml]
     type: eightfold
     board_url: https://careers.micron.com/careers
     domain: micron.com
@@ -84,6 +100,8 @@ companies:
 
   - name: NXP
     enabled: true
+    company_tier: B
+    priority_sectors: [hardware, swe]
     type: workday
     host: nxp.wd3.myworkdayjobs.com
     tenant: nxp
@@ -94,6 +112,8 @@ companies:
 
   - name: Silicon Labs
     enabled: true
+    company_tier: B
+    priority_sectors: [hardware, swe]
     type: workday
     host: silabs.wd1.myworkdayjobs.com
     tenant: silabs
@@ -104,6 +124,8 @@ companies:
 
   - name: Microsoft
     enabled: true
+    company_tier: A
+    priority_sectors: [swe, data_ml, hardware]
     type: eightfold
     board_url: https://apply.careers.microsoft.com/careers
     domain: microsoft.com
@@ -116,6 +138,8 @@ companies:
   # hard country=USA scope before the normal downstream location guard.
   - name: Amazon
     enabled: true
+    company_tier: A
+    priority_sectors: [hardware, swe, data_ml]
     type: amazon
     query: intern
     country: USA
@@ -129,6 +153,8 @@ companies:
   # searches only the official USA location facet.
   - name: Apple
     enabled: true
+    company_tier: A
+    priority_sectors: [hardware, swe, data_ml]
     type: apple
     query: intern
     locale: en-us
@@ -146,9 +172,77 @@ companies:
   # adapter can process without a browser. This is now in the active roster.
   - name: Google
     enabled: true
+    company_tier: A
+    priority_sectors: [swe, data_ml, hardware]
     type: google
     query: intern
     url: https://www.google.com/about/careers/applications/jobs/results/?location=United%20States&hl=en&jlo=en
+    target_year: 2027
+    us_only: true
+
+  # Large Greenhouse boards are fetched in compact mode first; only titles
+  # matching these opportunity terms incur a detail request.
+  - name: Cloudflare
+    enabled: true
+    company_tier: B
+    priority_sectors: [swe, data_ml]
+    type: greenhouse
+    board_token: cloudflare
+    title_terms: [intern, internship, co-op, coop, student]
+    max_detail_resolutions: 100
+    target_year: 2027
+    us_only: true
+
+  - name: Datadog
+    enabled: true
+    company_tier: B
+    priority_sectors: [swe, data_ml]
+    type: greenhouse
+    board_token: datadog
+    title_terms: [intern, internship, co-op, coop, student]
+    max_detail_resolutions: 100
+    target_year: 2027
+    us_only: true
+
+  - name: MongoDB
+    enabled: true
+    company_tier: B
+    priority_sectors: [swe, data_ml]
+    type: greenhouse
+    board_token: mongodb
+    title_terms: [intern, internship, co-op, coop, student]
+    max_detail_resolutions: 100
+    target_year: 2027
+    us_only: true
+
+  # SmartRecruiters' documented q filter is not reliable on every tenant, so
+  # the shared adapter pages the US board and filters internship titles locally
+  # before resolving descriptions.
+  - name: ServiceNow
+    enabled: true
+    company_tier: B
+    priority_sectors: [swe, data_ml]
+    type: smartrecruiters
+    identifier: ServiceNow
+    query: intern
+    country: us
+    title_terms: [intern, internship, co-op, coop, student]
+    page_size: 100
+    max_pages: 5
+    target_year: 2027
+    us_only: true
+
+  - name: Bosch
+    enabled: true
+    company_tier: C
+    priority_sectors: [hardware, swe, data_ml]
+    type: smartrecruiters
+    identifier: BoschGroup
+    query: intern
+    country: us
+    title_terms: [intern, internship, co-op, coop, student]
+    page_size: 100
+    max_pages: 5
     target_year: 2027
     us_only: true
 
@@ -157,16 +251,26 @@ companies:
 # staged is safer than pretending a brittle scraper is production-ready.
 staged_companies:
   - name: AMD
+    company_tier: A
     reason: Current Phenom careers site needs a dedicated stable adapter before activation.
   - name: Arm
+    company_tier: A
     reason: Current careers search needs a dedicated validated adapter before activation.
   - name: Meta
+    company_tier: A
     reason: Careers search is GraphQL/persisted-query based and requires a robust dedicated adapter.
   - name: Synopsys
+    company_tier: B
     reason: Current careers flow needs a dedicated validated adapter before activation.
   - name: Texas Instruments
+    company_tier: B
     reason: Add after its current ATS endpoint is verified and unit-tested.
   - name: Tesla
+    company_tier: A
     reason: Add after its current ATS endpoint is verified and unit-tested.
   - name: SpaceX
+    company_tier: A
     reason: Add after its current ATS endpoint is verified and unit-tested.
+  - name: Visa
+    company_tier: C
+    reason: Its historical SmartRecruiters tenant currently reports zero active postings, so enabling it would provide no useful health signal.

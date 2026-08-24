@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from src.alerts import discord_alert, discord_networking_followup
 from src.db import JobDB
 from src.enrich import TavilyBudget, build_search_specs, selected_search_specs, search_linkedin_public_index_outcome
-from src.filtering import is_relevant
+from src.filtering import evaluate_eligibility, is_relevant, score_sector_fit
 from src.locations import classify_us_location
 from src.sources.amazon import AmazonSource
 from src.sources.apple import AppleSource
@@ -17,6 +17,7 @@ from src.sources.generic import GenericJsonLdSource
 from src.sources.google import GoogleSource
 from src.sources.greenhouse import GreenhouseSource
 from src.sources.lever import LeverSource
+from src.sources.smartrecruiters import SmartRecruitersSource
 from src.sources.workday import WorkdaySource
 
 
@@ -50,7 +51,16 @@ def build_source(cfg):
     if t == "lever":
         return LeverSource(name, cfg["site"])
     if t == "greenhouse":
-        return GreenhouseSource(name, cfg["board_token"])
+        return GreenhouseSource(
+            name, cfg["board_token"], cfg.get("title_terms"),
+            cfg.get("max_detail_resolutions", 100),
+        )
+    if t == "smartrecruiters":
+        return SmartRecruitersSource(
+            name, cfg["identifier"], cfg.get("query", "intern"),
+            cfg.get("country", "us"), cfg.get("title_terms"),
+            cfg.get("page_size", 100), cfg.get("max_pages", 10),
+        )
     if t == "generic":
         return GenericJsonLdSource(name, cfg["url"])
     raise ValueError(f"Unknown source type: {t}")
@@ -215,6 +225,9 @@ def roster_check(config_path: str, threshold: float = 12.0, company_name: str | 
     print(f"Sources to check: {len(enabled)}")
     healthy = 0
     failed = 0
+    aggregate_eligibility = {"eligible": 0, "uncertain": 0, "ineligible": 0}
+    aggregate_sectors = {"hardware": 0, "swe": 0, "data_ml": 0}
+    sector_samples = {}
 
     for company in enabled:
         name = company["name"]
@@ -226,15 +239,25 @@ def roster_check(config_path: str, threshold: float = 12.0, company_name: str | 
             non_us = 0
             ambiguous = 0
             duplicate_keys = len(jobs) - len({(j.company, j.external_id) for j in jobs})
+            eligibility_counts = {"eligible": 0, "uncertain": 0, "ineligible": 0}
+            sector_counts = {"hardware": 0, "swe": 0, "data_ml": 0}
 
             for job in jobs:
+                candidate_status = evaluate_eligibility(job).status
+                eligibility_counts[candidate_status] += 1
+                aggregate_eligibility[candidate_status] += 1
                 is_fit = is_relevant(job, threshold, target_year=company.get("target_year"))
                 if not is_fit:
                     continue
                 relevant.append(job)
+                scores = score_sector_fit(job)
+                primary_sector = max(scores, key=scores.get)
+                sector_counts[primary_sector] += 1
+                aggregate_sectors[primary_sector] += 1
                 ok, _ = _eligibility(job, company, threshold)
                 if ok:
                     eligible.append(job)
+                    sector_samples.setdefault(primary_sector, job)
                 elif company.get("us_only", True):
                     decision = classify_us_location(job.location or "", company.get("type", ""))
                     if decision.status == "non_us":
@@ -261,7 +284,11 @@ def roster_check(config_path: str, threshold: float = 12.0, company_name: str | 
             print(
                 f"OK   {name}: {len(jobs)} fetched | {len(relevant)} relevant | "
                 f"{len(eligible)} US-eligible | {non_us} non-US relevant | "
-                f"{ambiguous} ambiguous{extra}"
+                f"{ambiguous} ambiguous | eligibility "
+                f"E/U/I {eligibility_counts['eligible']}/{eligibility_counts['uncertain']}/"
+                f"{eligibility_counts['ineligible']} | primary sectors "
+                f"H/S/D {sector_counts['hardware']}/{sector_counts['swe']}/"
+                f"{sector_counts['data_ml']}{extra}"
             )
             healthy += 1
         except Exception as e:
@@ -271,6 +298,23 @@ def roster_check(config_path: str, threshold: float = 12.0, company_name: str | 
     staged = cfg.get("staged_companies", [])
     print(f"\nHealthy enabled sources: {healthy}/{len(enabled)}")
     print(f"Failed safely: {failed}")
+    print(
+        "Candidate eligibility totals (eligible/uncertain/ineligible): "
+        f"{aggregate_eligibility['eligible']}/{aggregate_eligibility['uncertain']}/"
+        f"{aggregate_eligibility['ineligible']}"
+    )
+    print(
+        "Relevant primary-sector totals (hardware/swe/data_ml): "
+        f"{aggregate_sectors['hardware']}/{aggregate_sectors['swe']}/"
+        f"{aggregate_sectors['data_ml']}"
+    )
+    for sector in ("hardware", "swe", "data_ml"):
+        sample = sector_samples.get(sector)
+        if sample:
+            print(
+                f"Sample {sector}: {sample.company} — {sample.title} — "
+                f"{sample.location or 'location not listed'}"
+            )
     if staged and not company_name:
         print(f"Staged/not yet enabled: {len(staged)}")
         for item in staged:

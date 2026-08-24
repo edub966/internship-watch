@@ -4,9 +4,10 @@ A Computer Engineering internship monitor that scans public company career pages
 
 ## What this project does today
 
-- Polls enabled company career sources such as Workday, Eightfold, Amazon, Apple, Lever, Greenhouse, and JSON-LD generic pages.
+- Polls enabled company career sources through Workday, Eightfold, SmartRecruiters, Greenhouse, Amazon, Apple, Google, Lever, and JSON-LD adapters.
 - Normalizes each posting into a single Job schema.
-- Scores and filters postings for CE relevance using `src/filtering.py`.
+- Classifies internship eligibility before any technical-fit decision.
+- Scores eligible postings independently for hardware, SWE, and data/ML relevance using `src/filtering.py`.
 - Uses a target-year filter and a US-only gate by default.
 - Stores active jobs and alert/networking state in SQLite so the pipeline does not spam on reruns.
 - Queues new qualifying jobs for Discord alerts and networking enrichment.
@@ -29,7 +30,16 @@ Company career source
   normalize job
         |
         v
-  CE relevance + target-year + US filter
+ internship / target-cycle classification
+        |
+        v
+ candidate eligibility
+        |
+        v
+ hardware / SWE / data-ML sector scores
+        |
+        v
+ US-location filter
         |
         v
   SQLite dedupe + eligibility state
@@ -79,6 +89,8 @@ TAVILY_CREDIT_RESERVE=250
 TAVILY_REQUIRE_USAGE_CHECK=true
 MAX_ALERTS_PER_RUN=20
 MAX_NETWORKING_JOBS_PER_RUN=20
+EXPECTED_GRAD_YEAR=2029
+CANDIDATE_SPECIAL_PROGRAM_ELIGIBLE=false
 ```
 
 Do not commit `.env` to GitHub.
@@ -89,61 +101,55 @@ The active roster lives in `config/companies.yaml`.
 
 ### Current active companies
 
-The project currently enables a production-safe set of sources with `target_year: 2027` and `us_only: true`:
+The project currently enables 19 production-safe sources with `target_year: 2027` and `us_only: true`. Tier is employer metadata only; it never changes a job's technical fit score.
 
-```yaml
-companies:
-  - name: NVIDIA
-    enabled: true
-    type: workday
-    host: nvidia.wd5.myworkdayjobs.com
-    tenant: nvidia
-    site: NVIDIAExternalCareerSite
-    search_text: intern
-    target_year: 2027
-    us_only: true
-
-  - name: Qualcomm
-    enabled: true
-    type: eightfold
-    board_url: https://careers.qualcomm.com/careers
-    domain: qualcomm.com
-    query: intern
-    max_pages: 20
-    target_year: 2027
-    us_only: true
-
-  - name: Amazon
-    enabled: true
-    type: amazon
-    query: intern
-    country: USA
-    result_limit: 100
-    max_pages: 20
-    page_delay: 0.10
-    target_year: 2027
-    us_only: true
-
-  - name: Apple
-    enabled: true
-    type: apple
-    query: intern
-    locale: en-us
-    location_filter: postLocation-USA
-    team: STDNT
-    sub_team: INTRN
-    max_pages: 30
-    target_year: 2027
-    us_only: true
-```
+| Company | Tier | Provider | Hardware | SWE | Data/ML | Status |
+|---|---:|---|:---:|:---:|:---:|---|
+| NVIDIA | A | Workday | ✓ | ✓ | ✓ | Active |
+| Qualcomm | A | Eightfold | ✓ | ✓ | ✓ | Active |
+| Intel | A | Workday | ✓ | ✓ | ✓ | Active |
+| Broadcom | A | Workday | ✓ | ✓ |  | Active |
+| Analog Devices | B | Workday | ✓ | ✓ |  | Active |
+| Cadence | B | Workday | ✓ | ✓ |  | Active |
+| Marvell | B | Workday | ✓ | ✓ |  | Active |
+| Micron | A | Eightfold | ✓ | ✓ | ✓ | Active |
+| NXP | B | Workday | ✓ | ✓ |  | Active |
+| Silicon Labs | B | Workday | ✓ | ✓ |  | Active |
+| Microsoft | A | Eightfold | ✓ | ✓ | ✓ | Active |
+| Amazon | A | Amazon Jobs API | ✓ | ✓ | ✓ | Active |
+| Apple | A | Apple careers API | ✓ | ✓ | ✓ | Active |
+| Google | A | Google careers payload | ✓ | ✓ | ✓ | Active |
+| Cloudflare | B | Greenhouse |  | ✓ | ✓ | Active |
+| Datadog | B | Greenhouse |  | ✓ | ✓ | Active |
+| MongoDB | B | Greenhouse |  | ✓ | ✓ | Active |
+| ServiceNow | B | SmartRecruiters |  | ✓ | ✓ | Active |
+| Bosch | C | SmartRecruiters | ✓ | ✓ | ✓ | Active |
 
 Additional values used by the pipeline include:
 
-- `type`: supported source adapter type (`workday`, `eightfold`, `amazon`, `apple`, `lever`, `greenhouse`, `generic`)
+- `type`: supported source adapter type (`workday`, `eightfold`, `smartrecruiters`, `greenhouse`, `amazon`, `apple`, `google`, `lever`, `generic`)
+- `company_tier`: `A`, `B`, or `C`; ranking metadata that is intentionally separate from fit
+- `priority_sectors`: one or more of `hardware`, `swe`, and `data_ml`
 - `target_year`: target internship cycle such as `2027`
 - `us_only`: whether the pipeline requires a US location before alerting or Tavily enrichment
+- `title_terms`: provider-side/local opportunity terms used to avoid detail calls for unrelated jobs on large boards
+- `max_pages` / `max_detail_resolutions`: fail-safe capacity controls; exceeding either aborts the company sync rather than recording a partial snapshot
 - `resolve_ambiguous_relevant`: used by Workday and related adapters for ambiguous-location handling
 - `staged_companies`: companies deliberately kept off the live roster until a stable adapter is validated
+
+### Adding another company
+
+Prefer an existing provider adapter and add one declarative company entry. For Workday, supply `host`, `tenant`, and `site`; for Greenhouse, supply `board_token`; for SmartRecruiters, supply the public career-site `identifier`. Always add tier/sector metadata, keep `target_year` and `us_only` explicit, add or reuse a provider fixture, and commission with:
+
+```bash
+python -m src.main --roster-check --company "Company Name"
+```
+
+The roster check distinguishes a healthy zero-match day from a parser failure by reporting provider row counts, title candidates, detail lookups, and hard failures. It never writes the DB or calls Discord/Tavily.
+
+Do not enable a source that needs CAPTCHA bypass, authenticated endpoints, or brittle browser automation. Keep it under `staged_companies` with the concrete technical reason instead.
+
+Current staged targets are AMD (Phenom adapter needed), Arm and Synopsys (career endpoints still need validated adapters), Meta (persisted-query GraphQL), Texas Instruments/Tesla/SpaceX (ATS endpoints not yet commissioned), and Visa (its historical SmartRecruiters tenant currently reports zero active postings).
 
 ## Common CLI commands
 
@@ -227,17 +233,42 @@ This project is intentionally conservative with Tavily usage.
 
 The code runs a usage guard before search requests and fails closed if the budget or usage data is unavailable or inconsistent.
 
-## How the filter works
+## Eligibility and sector scoring
 
-The Python filter in `src/filtering.py` looks for Computer Engineering and internship-relevant terms such as:
+`src/filtering.py` evaluates the pipeline in this order: normalize, classify the opportunity, evaluate candidate eligibility, classify sectors, then compute technical fit. Explicit graduate-only, non-intern/new-grad, restricted special-program, and incompatible graduation-window postings are ineligible before sector terms can score. Missing degree or graduation information remains uncertain instead of becoming a fabricated rejection.
 
-- ASIC / FPGA / RTL / Verilog / SystemVerilog / VHDL
-- firmware / embedded / SoC / silicon / digital design / verification
-- GPU / CUDA / compiler / architecture
-- C/C++ / Linux / systems
-- engineering-heavy internship language
+Candidate configuration defaults to an expected 2029 graduation and no SkillBridge/returnship eligibility. Override those defaults with `EXPECTED_GRAD_YEAR` and `CANDIDATE_SPECIAL_PROGRAM_ELIGIBLE`.
 
-The filter also respects target-year matching and penalizes senior/staff/manager-heavy titles.
+Eligible and uncertain postings receive independent `hardware`, `swe`, and `data_ml` scores. Overall compatibility uses the strongest applicable sector instead of averaging all three, so specialized hardware or data-science internships are not diluted. Company tier is never an input to these scores.
+
+High-value crossover signals—systems software, CUDA/GPU, compilers, ML infrastructure, embedded AI, and performance engineering—can score in multiple sectors.
+
+## Provider rate and snapshot behavior
+
+- Workday resolves details only for relevant postings whose list-view location is ambiguous.
+- Greenhouse downloads a compact board once, then resolves only token-matched internship/student titles.
+- SmartRecruiters uses documented offset pagination plus its country filter, then applies the same token-aware title filter because some live tenants ignore the public `q` parameter.
+- Eightfold repairs unstable page-boundary duplicates and refuses incomplete snapshots.
+- Capacity limits fail the company safely; partial results are never synced as if jobs disappeared.
+
+None of these listing/detail calls use Tavily. Eligibility and US-location gates still run before any queued external enrichment.
+
+## Alert contents
+
+Qualifying Discord and console alerts show the structured eligibility decision, a verification reason when information is uncertain, the primary track, recommended resume, overall fit, and all three sector scores. For example:
+
+```text
+Eligibility: ✅ Eligible
+Primary track: SWE / Systems
+Recommended resume: SWE
+Overall fit: 89
+Fit by track
+Hardware / Architecture: 42
+SWE / Systems: 89
+Data / ML / AI: 65
+```
+
+Hard-ineligible postings never enter either the alert or networking queue. Uncertain postings can alert when their technical relevance and location pass, but are visibly marked `⚠️ Verify` with the missing requirement noted.
 
 ## Running tests
 
@@ -280,4 +311,4 @@ Add these in GitHub:
 
 ## Project status
 
-This README reflects the current v5 codebase and command set. The project is intentionally focused on mission-safe, low-volume public-web internship monitoring rather than broad automation or private platform scraping.
+This README reflects the Phase 3 provider/config expansion. The project remains focused on mission-safe, low-volume public-web internship monitoring rather than broad automation or private platform scraping.
