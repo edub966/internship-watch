@@ -1,5 +1,9 @@
+import os
 import re
+from dataclasses import dataclass, field
+
 from bs4 import BeautifulSoup
+
 from src.models import Job
 
 
@@ -61,6 +65,48 @@ NON_TECH_TITLE_TERMS = [
     "hr intern", "recruiting", "communications intern", "business intern",
 ]
 
+SECTOR_KEYWORDS = {
+    "hardware": {
+        "asic": 18, "rtl": 18, "verilog": 17, "systemverilog": 18, "fpga": 16,
+        "vlsi": 16, "digital design": 18, "verification": 12, "validation": 12,
+        "hardware": 10, "computer architecture": 20, "microarchitecture": 17,
+        "cpu": 10, "gpu": 8, "memory hierarchy": 12, "cache": 9, "soc": 12,
+        "silicon": 11, "semiconductor": 12, "dft": 14, "physical design": 15,
+        "embedded": 12, "firmware": 11, "rtos": 10, "device driver": 12,
+        "systems software": 8, "c++": 6, "low level": 8,
+    },
+    "swe": {
+        "software engineer": 18, "software engineering": 18, "systems software": 20,
+        "backend": 12, "frontend": 12, "full stack": 11, "infrastructure": 10,
+        "platform": 8, "distributed systems": 12, "cloud": 8, "api": 10,
+        "rest": 8, "database": 8, "sql": 8, "linux": 7, "kernel": 9,
+        "networking": 7, "python": 7, "javascript": 7, "typescript": 7,
+        "docker": 7, "nginx": 7, "authentication": 6, "realtime": 8,
+        "algorithms": 8, "data structures": 8, "c++": 7,
+    },
+    "data_ml": {
+        "data science": 18, "machine learning": 18, "ml engineer": 18,
+        "deep learning": 18, "artificial intelligence": 17, "ai": 14,
+        "applied scientist": 16, "nvidia": 5, "python": 9, "sql": 8,
+        "pandas": 10, "numpy": 10, "scikit": 9, "xgboost": 12,
+        "pytorch": 12, "tensorflow": 12, "recommendation": 10,
+        "computer vision": 12, "nlp": 12, "optimization": 8,
+        "statistical modeling": 10, "forecasting": 8, "anomaly detection": 10,
+    },
+}
+
+
+@dataclass
+class EligibilityResult:
+    status: str = "uncertain"
+    reasons: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    degree_match: bool | None = None
+    job_type_match: bool | None = None
+    term_match: bool | None = None
+    graduation_window_match: bool | None = None
+    special_program_match: bool | None = None
+
 
 def clean_html(text: str) -> str:
     if not text:
@@ -90,67 +136,147 @@ def _title_years(title: str) -> set[int]:
 
 
 def matches_target_year(job: Job, target_year: int | None) -> bool:
-    """Reject only when the TITLE explicitly names a different internship year.
-
-    Titles without a year remain eligible. We intentionally do not scan the body
-    for years because copyright/legal text can mention unrelated years.
-    """
+    """Reject only when the TITLE explicitly names a different internship year."""
     if not target_year:
         return True
     years = _title_years(job.title or "")
     return not years or int(target_year) in years
 
 
+def _candidate_eligible_special_programs() -> bool:
+    value = os.getenv("CANDIDATE_SPECIAL_PROGRAM_ELIGIBLE", "false").strip().lower()
+    return value in {"1", "true", "yes", "y"}
 
-def academic_ineligibility_reason(job: Job) -> str | None:
-    """Return a reason only for academic requirements that clearly exclude us.
 
-    Conservative on purpose: uncertain wording is allowed through.
-    """
-    _, text = _text(job)
+def evaluate_eligibility(job: Job, candidate_graduation_year: int | None = None) -> EligibilityResult:
+    """Return a structured eligibility result before fit scoring is applied."""
+    title, text = _text(job)
+    status = "eligible"
+    reasons: list[str] = []
+    candidate_grad = candidate_graduation_year or int(os.getenv("EXPECTED_GRAD_YEAR", "2029"))
+
+    # Internship / job-type gate.
+    if not any(term in text for term in INTERNSHIP_TERMS):
+        status = "ineligible"
+        reasons.append("no internship or student term detected")
+        return EligibilityResult(status=status, reasons=reasons, confidence=0.98,
+                                degree_match=False, job_type_match=False, term_match=False)
+
+    non_intern_job_type_patterns = [
+        r"\bfull[- ]time\b",
+        r"\bnew grad\b",
+        r"\bnew-grad\b",
+        r"\bprogram manager\b",
+        r"\bproduct manager\b",
+        r"\bmanager\b",
+        r"\bstaff\b",
+        r"\bprincipal\b",
+        r"\bdirector\b",
+        r"\bsenior\b",
+    ]
+    if re.search(r"\b(?:program manager|product manager|manager|staff|principal|director|senior)\b", title, re.I):
+        if not re.search(r"\bintern\b|\bco[- ]?op\b|\bstudent\b", title, re.I):
+            status = "ineligible"
+            reasons.append("non-intern role designation")
+    for pattern in non_intern_job_type_patterns:
+        if re.search(pattern, text, re.I) and not re.search(r"\bintern\b|\bco[- ]?op\b|\bstudent\b", text, re.I):
+            status = "ineligible"
+            reasons.append("non-intern role detected")
+            break
 
     graduate_only_patterns = [
         r"\bph\.?d\.?\s+(?:degree\s+)?required\b",
         r"\bdoctoral\s+degree\s+required\b",
         r"\bmaster'?s?\s+degree\s+required\b",
         r"\bmasters?\s+degree\s+required\b",
+        r"\b(?:m\.s\.|ms)\s+students?\s+only\b",
         r"\bgraduate\s+students?\s+only\b",
         r"\bph\.?d\.?\s+students?\s+only\b",
         r"\bmaster'?s?\s+students?\s+only\b",
-        r"\bminimum\b.{0,40}\b(?:master'?s?|ph\.?d\.?|doctoral)\b",
+        r"\bmasters?\s+students?\s+only\b",
     ]
+    allows_undergrad = bool(re.search(r"\b(?:undergrad|bachelor'?s?|undergraduate|bs\b|b\.s\.)\b", text, re.I))
+    if any(re.search(pattern, text, re.I) is not None for pattern in graduate_only_patterns):
+        if not allows_undergrad:
+            status = "ineligible"
+            reasons.append("graduate-degree-only requirement")
 
-    for pattern in graduate_only_patterns:
-        if re.search(pattern, text, re.I):
-            # Do not reject if bachelor's/undergraduate is explicitly accepted too.
-            context_has_undergrad = re.search(
-                r"\b(?:bachelor'?s?|undergraduate)\b", text, re.I
-            )
-            if not context_has_undergrad:
-                return "graduate-degree-only requirement"
-
-    # Explicit requirements to finish school too early for our target.
-    # We intentionally only hard-reject 2027-or-earlier language rather than
-    # trying to infer eligibility from every random year in the description.
-    grad_patterns = [
-        r"\bgraduat(?:e|es|ing|ion)\b.{0,50}\b(?:in|by|before|on or before|no later than)\b.{0,20}\b(20\d{2})\b",
-        r"\b(?:expected\s+)?graduation\s+(?:date|year)?\b.{0,40}\b(20\d{2})\b",
-        r"\b(20\d{2})\b.{0,40}\bgraduat(?:e|es|ing|ion)\b",
-    ]
-
-    for pattern in grad_patterns:
-        for match in re.finditer(pattern, text, re.I):
-            year = int(match.group(1))
-
-            # "2027 or later" does NOT exclude us.
-            context = text[max(0, match.start() - 30):match.end() + 30]
+    # Respect explicit graduate-window exclusions.
+    year_pattern = re.compile(r"\b(?:expected\s+)?graduation(?:\s+(?:date|year))?\b.{0,30}\b(20\d{2})\b|\b(?:graduate|graduating)\s+(?:by|before|on or before|no later than)\b.{0,20}\b(20\d{2})\b|\b(20\d{2})\b.{0,25}\b(?:graduate|graduating|graduation)\b", re.I)
+    for match in year_pattern.finditer(text):
+        year_candidates = [int(g) for g in match.groups() if g and g.isdigit()]
+        for year in year_candidates:
+            context = text[max(0, match.start() - 40):match.end() + 40]
             if re.search(r"\b(?:or later|or after|and later|or beyond)\b", context, re.I):
                 continue
+            if year < candidate_grad:
+                status = "ineligible"
+                reasons.append(f"explicit graduation window excludes expected grad year {candidate_grad}: {year}")
+                break
+        if status == "ineligible":
+            break
 
-            if year <= 2027:
-                return f"graduation requirement too early ({year})"
+    skillbridge_patterns = [
+        r"\bskillbridge\b",
+        r"\bdod\s+skillbridge\b",
+        r"\bmilitary\s+transition\b",
+        r"\breturnship\b",
+    ]
+    if any(re.search(p, text, re.I) is not None for p in skillbridge_patterns):
+        if not _candidate_eligible_special_programs():
+            status = "ineligible"
+            reasons.append("special program excluded by candidate configuration")
 
+    if status == "eligible" and not re.search(r"\b(?:undergrad|bachelor'?s?|undergraduate|bs\b|b\.s\.|master'?s?|ms\b|m\.s\.|ph\.?d\.?|doctoral)\b", text, re.I):
+        status = "uncertain"
+        reasons.append("degree requirement not explicit")
+
+    if status == "eligible" and re.search(r"\b(?:undergrad|undergraduate|bachelor'?s?|bs\b|b\.s\.)\b", text, re.I):
+        confidence = 0.87
+    elif status == "uncertain":
+        confidence = 0.55
+    else:
+        confidence = 0.97 if status == "ineligible" else 0.74
+
+    return EligibilityResult(
+        status=status,
+        reasons=reasons,
+        confidence=confidence,
+        degree_match=not any(re.search(p, text, re.I) is not None for p in [
+            r"\bmaster'?s?\s+degree\s+required\b",
+            r"\bph\.?d\.?\s+students?\s+only\b",
+            r"\bgraduate\s+students?\s+only\b",
+        ]),
+        job_type_match=bool(re.search(r"\bintern\b|\bco[- ]?op\b|\bstudent\b", text, re.I)),
+        term_match=bool(re.search(r"\bintern\b|\bco[- ]?op\b|\bstudent\b", title, re.I)),
+        graduation_window_match=not bool(re.search(r"\b(?:graduate|graduating|graduation)\b.{0,40}\b(?:before|by|no later than)\b", text, re.I)),
+        special_program_match=not any(re.search(p, text, re.I) is not None for p in [r"\bskillbridge\b", r"\breturnship\b"]),
+    )
+
+
+def academic_ineligibility_reason(job: Job) -> str | None:
+    """Backward-compatible helper used by older tests and callers."""
+    result = evaluate_eligibility(job)
+    if result.status == "ineligible":
+        return "; ".join(result.reasons) if result.reasons else "ineligible"
     return None
+
+
+def score_sector_fit(job: Job) -> dict[str, float]:
+    """Score each target sector without requiring a prior fit decision."""
+    _, text = _text(job)
+    sector_scores = {k: 0.0 for k in ("hardware", "swe", "data_ml")}
+    for sector, terms in SECTOR_KEYWORDS.items():
+        score = 0.0
+        for term, weight in terms.items():
+            if term in text:
+                score += weight
+        if sector == "hardware":
+            if "hardware" in text or "computer architecture" in text:
+                score += 8
+        sector_scores[sector] = round(score, 2)
+    return sector_scores
+
 
 def relevance_score(job: Job, target_year: int | None = None) -> float:
     title, text = _text(job)
@@ -159,11 +285,16 @@ def relevance_score(job: Job, target_year: int | None = None) -> float:
         return -20.0
     if not matches_target_year(job, target_year):
         return -30.0
-    if academic_ineligibility_reason(job):
-        return -40.0
 
-    fit = _fit_points(job)
-    score = 10.0 + fit
+    eligibility = evaluate_eligibility(job)
+    if eligibility.status == "ineligible":
+        return -50.0
+
+    sector_scores = score_sector_fit(job)
+    best_sector_score = max(sector_scores.values())
+    score = 10.0 + best_sector_score
+    if eligibility.status == "uncertain":
+        score -= 3.0
 
     for term, weight in NEGATIVE_TERMS.items():
         if term in text:
@@ -179,7 +310,7 @@ def relevance_score(job: Job, target_year: int | None = None) -> float:
 
 
 def is_relevant(job: Job, threshold: float = 12.0, target_year: int | None = None) -> bool:
-    title, text = _text(job)
+    _, text = _text(job)
 
     if not any(term in text for term in INTERNSHIP_TERMS):
         job.score = -20.0
@@ -189,13 +320,14 @@ def is_relevant(job: Job, threshold: float = 12.0, target_year: int | None = Non
         job.score = -30.0
         return False
 
-    if academic_ineligibility_reason(job):
-        job.score = -40.0
+    eligibility = evaluate_eligibility(job)
+    if eligibility.status == "ineligible":
+        job.score = -50.0
         return False
 
-    fit = _fit_points(job)
-    if fit < 2:
-        job.score = round(10.0 + fit, 2)
+    fit = score_sector_fit(job)
+    if all(score < 4 for score in fit.values()):
+        job.score = 10.0
         return False
 
     job.score = relevance_score(job, target_year=target_year)
