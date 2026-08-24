@@ -10,7 +10,7 @@ def test_active_roster_has_tier_and_priority_sector_metadata():
         config = yaml.safe_load(config_file)
 
     active = [company for company in config["companies"] if company.get("enabled", True)]
-    assert len(active) == 19
+    assert len(active) == 38
     assert len({company["name"] for company in active}) == len(active)
     for company in active:
         assert company["company_tier"] in {"A", "B", "C"}

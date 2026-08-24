@@ -76,3 +76,31 @@ def test_incomplete_scan_still_fails_closed():
             assert "company was NOT synced" in str(exc)
         else:
             raise AssertionError("partial Eightfold snapshot should not be returned")
+
+
+def test_exhaustive_shift_recovers_a_stubborn_timestamp_tie():
+    all_positions = [pos(i) for i in range(21)]
+
+    def fake_get(self, url, params=None, timeout=None):
+        start = int(params["start"])
+        rows = all_positions[start:start + 10]
+        if start == 2:
+            return FakeResponse(rows, 21)
+        # Hide position 7 from every ordinary and first-shift page while
+        # preserving the provider's reported count and page length.
+        rows = [row for row in rows if row["id"] != all_positions[7]["id"]]
+        if start <= 7 < start + 10 and rows:
+            rows.append(rows[-1])
+        return FakeResponse(rows, 21)
+
+    source = EightfoldSource(
+        "Microsoft",
+        "https://apply.careers.microsoft.com/careers",
+        "microsoft.com",
+        query="intern",
+    )
+    with patch("requests.Session.get", new=fake_get):
+        jobs = source.fetch()
+
+    assert len(jobs) == 21
+    assert "pagination repaired" in source.last_scan_note

@@ -104,7 +104,7 @@ The active roster lives in `config/companies.yaml`.
 
 ### Current active companies
 
-The project currently enables 19 production-safe sources with `target_year: 2027` and `us_only: true`. Tier is employer metadata only; it never changes a job's technical fit score.
+The project currently enables 38 production-safe sources with `target_year: 2027` and `us_only: true`. Tier is employer metadata only; it never changes a job's technical fit score.
 
 | Company | Tier | Provider | Hardware | SWE | Data/ML | Status |
 |---|---:|---|:---:|:---:|:---:|---|
@@ -127,6 +127,25 @@ The project currently enables 19 production-safe sources with `target_year: 2027
 | MongoDB | B | Greenhouse |  | ✓ | ✓ | Active |
 | ServiceNow | B | SmartRecruiters |  | ✓ | ✓ | Active |
 | Bosch | C | SmartRecruiters | ✓ | ✓ | ✓ | Active |
+| Databricks | A | Greenhouse |  | ✓ | ✓ | Active |
+| Stripe | A | Greenhouse |  | ✓ | ✓ | Active |
+| Palantir | A | Lever |  | ✓ | ✓ | Active |
+| Applied Materials | B | Workday | ✓ | ✓ | ✓ | Active |
+| KLA | B | Workday | ✓ | ✓ | ✓ | Active |
+| Lam Research | B | Eightfold | ✓ | ✓ | ✓ | Active |
+| GlobalFoundries | B | Eightfold | ✓ | ✓ |  | Active |
+| Microchip | B | Workday | ✓ | ✓ |  | Active |
+| Roblox | B | Greenhouse |  | ✓ | ✓ | Active |
+| Autodesk | B | Workday | ✓ | ✓ | ✓ | Active |
+| Northrop Grumman | C | Workday | ✓ | ✓ | ✓ | Active |
+| RTX | C | Workday | ✓ | ✓ | ✓ | Active |
+| Capital One | C | Workday |  | ✓ | ✓ | Active |
+| Mastercard | C | Workday |  | ✓ | ✓ | Active |
+| HubSpot | C | Greenhouse |  | ✓ | ✓ | Active |
+| Cox Enterprises | C | Workday |  | ✓ | ✓ | Active |
+| Home Depot | C | Workday |  | ✓ | ✓ | Active |
+| Fiserv | C | Workday |  | ✓ | ✓ | Active |
+| Equifax | C | Workday |  | ✓ | ✓ | Active |
 
 Additional values used by the pipeline include:
 
@@ -136,6 +155,7 @@ Additional values used by the pipeline include:
 - `target_year`: target internship cycle such as `2027`
 - `us_only`: whether the pipeline requires a US location before alerting or Tavily enrichment
 - `title_terms`: provider-side/local opportunity terms used to avoid detail calls for unrelated jobs on large boards
+- `facet_terms`: Workday facet descriptors resolved to provider IDs on every scan; used to restrict large boards to internship/student job types before pagination
 - `max_pages` / `max_detail_resolutions`: fail-safe capacity controls; exceeding either aborts the company sync rather than recording a partial snapshot
 - `resolve_ambiguous_relevant`: used by Workday and related adapters for ambiguous-location handling
 - `staged_companies`: companies deliberately kept off the live roster until a stable adapter is validated
@@ -152,7 +172,7 @@ The roster check distinguishes a healthy zero-match day from a parser failure by
 
 Do not enable a source that needs CAPTCHA bypass, authenticated endpoints, or brittle browser automation. Keep it under `staged_companies` with the concrete technical reason instead.
 
-Current staged targets are AMD (Phenom adapter needed), Arm and Synopsys (career endpoints still need validated adapters), Meta (persisted-query GraphQL), Texas Instruments/Tesla/SpaceX (ATS endpoints not yet commissioned), and Visa (its historical SmartRecruiters tenant currently reports zero active postings).
+The remaining requested targets stay in `staged_companies` with a concrete reason. Major groups include custom or uncommissioned career systems (AMD, Arm, Meta, Snowflake, Bloomberg, Synopsys, Texas Instruments, Tesla, Intuit, and MathWorks), former Workday URLs that no longer expose the expected public CXS endpoint, and healthy Workday boards such as Motorola Solutions and Rockwell Automation that currently lack a rate-safe internship facet. They are deliberately not treated as supported until a source can distinguish a healthy zero-internship day from an incomplete or excessively broad scan.
 
 ## Common CLI commands
 

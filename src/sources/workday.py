@@ -1,4 +1,4 @@
-from typing import List
+from typing import Iterable, List, Mapping
 import requests
 
 from src.filtering import is_relevant
@@ -28,6 +28,7 @@ class WorkdaySource(JobSource):
         target_year: int | None = None,
         resolve_ambiguous_relevant: bool = True,
         max_detail_resolutions: int = 100,
+        facet_terms: Mapping[str, Iterable[str]] | None = None,
     ):
         self.company = company
         self.host = host
@@ -37,8 +38,43 @@ class WorkdaySource(JobSource):
         self.target_year = target_year
         self.resolve_ambiguous_relevant = bool(resolve_ambiguous_relevant)
         self.max_detail_resolutions = max(0, int(max_detail_resolutions))
+        self.facet_terms = {
+            str(parameter): tuple(
+                str(term).strip().lower()
+                for term in terms
+                if str(term).strip()
+            )
+            for parameter, terms in (facet_terms or {}).items()
+            if str(parameter).strip()
+        }
         self.base = f"https://{host}/wday/cxs/{tenant}/{site}"
         self.last_scan_note = ""
+
+    def _resolve_facet_filters(self, data: dict) -> dict[str, list[str]]:
+        """Resolve stable facet names to provider-owned IDs on every scan."""
+        facets = {
+            str(facet.get("facetParameter")): facet
+            for facet in (data.get("facets") or [])
+            if isinstance(facet, dict) and facet.get("facetParameter")
+        }
+        missing = sorted(set(self.facet_terms) - set(facets))
+        if missing:
+            raise RuntimeError(
+                "Workday facet configuration no longer matches provider metadata: "
+                + ", ".join(missing)
+            )
+
+        resolved = {}
+        for parameter, terms in self.facet_terms.items():
+            values = facets[parameter].get("values") or []
+            resolved[parameter] = [
+                str(value.get("id"))
+                for value in values
+                if isinstance(value, dict)
+                and value.get("id")
+                and any(term in str(value.get("descriptor") or "").lower() for term in terms)
+            ]
+        return resolved
 
     @staticmethod
     def _join_locations(primary, additional) -> str:
@@ -80,9 +116,37 @@ class WorkdaySource(JobSource):
             "Accept": "application/json",
         })
 
+        applied_facets = {}
+        facet_note = ""
+        if self.facet_terms:
+            probe = session.post(
+                f"{self.base}/jobs",
+                json={
+                    "appliedFacets": {},
+                    "limit": 1,
+                    "offset": 0,
+                    "searchText": self.search_text,
+                },
+                timeout=25,
+            )
+            probe.raise_for_status()
+            probe_data = probe.json()
+            applied_facets = self._resolve_facet_filters(probe_data)
+            empty_parameters = [name for name, ids in applied_facets.items() if not ids]
+            if empty_parameters:
+                self.last_scan_note = (
+                    "provider facets healthy; no current values match "
+                    + ", ".join(empty_parameters)
+                )
+                return []
+            facet_note = "provider facet filter " + ", ".join(
+                f"{name}={len(ids)} value{'s' if len(ids) != 1 else ''}"
+                for name, ids in applied_facets.items()
+            )
+
         while True:
             payload = {
-                "appliedFacets": {},
+                "appliedFacets": applied_facets,
                 "limit": limit,
                 "offset": offset,
                 "searchText": self.search_text,
@@ -146,7 +210,7 @@ class WorkdaySource(JobSource):
                 else:
                     classified_from_detail += 1
 
-        notes = []
+        notes = [facet_note] if facet_note else []
         if detail_lookups:
             notes.append(f"{detail_lookups} Workday detail lookup{'s' if detail_lookups != 1 else ''}")
         if classified_from_detail:

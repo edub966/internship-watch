@@ -246,6 +246,257 @@ companies:
     target_year: 2027
     us_only: true
 
+  # Tier A software/data expansion through stable shared ATS providers.
+  - name: Databricks
+    enabled: true
+    company_tier: A
+    priority_sectors: [data_ml, swe]
+    type: greenhouse
+    board_token: databricks
+    title_terms: [intern, internship, co-op, coop, student]
+    max_detail_resolutions: 100
+    target_year: 2027
+    us_only: true
+
+  - name: Stripe
+    enabled: true
+    company_tier: A
+    priority_sectors: [swe, data_ml]
+    type: greenhouse
+    board_token: stripe
+    title_terms: [intern, internship, co-op, coop, student]
+    max_detail_resolutions: 100
+    target_year: 2027
+    us_only: true
+
+  - name: Palantir
+    enabled: true
+    company_tier: A
+    priority_sectors: [swe, data_ml]
+    type: lever
+    site: palantir
+    max_pages: 5
+    target_year: 2027
+    us_only: true
+
+  # Tier B semiconductor and technical-company expansion. Large Workday boards
+  # use provider facet descriptors that are resolved to IDs on every scan.
+  - name: Applied Materials
+    enabled: true
+    company_tier: B
+    priority_sectors: [hardware, data_ml, swe]
+    type: workday
+    host: amat.wd1.myworkdayjobs.com
+    tenant: amat
+    site: External
+    search_text: intern
+    facet_terms:
+      workerSubType: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
+  - name: KLA
+    enabled: true
+    company_tier: B
+    priority_sectors: [hardware, swe, data_ml]
+    type: workday
+    host: kla.wd1.myworkdayjobs.com
+    tenant: kla
+    site: Search
+    search_text: intern
+    facet_terms:
+      workerSubType: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
+  - name: Lam Research
+    enabled: true
+    company_tier: B
+    priority_sectors: [hardware, data_ml, swe]
+    type: eightfold
+    board_url: https://lamresearch.eightfold.ai/careers
+    domain: lamresearch.com
+    query: intern
+    max_pages: 10
+    target_year: 2027
+    us_only: true
+
+  - name: GlobalFoundries
+    enabled: true
+    company_tier: B
+    priority_sectors: [hardware, swe]
+    type: eightfold
+    board_url: https://careers.gf.com/careers
+    domain: globalfoundries.com
+    query: intern
+    max_pages: 20
+    target_year: 2027
+    us_only: true
+
+  - name: Microchip
+    enabled: true
+    company_tier: B
+    priority_sectors: [hardware, swe]
+    type: workday
+    host: microchiphr.wd5.myworkdayjobs.com
+    tenant: microchiphr
+    site: external
+    search_text: intern
+    facet_terms:
+      zz_LRV_Career_Level_Requisition_Extended: [intern, student]
+    target_year: 2027
+    us_only: true
+
+  - name: Roblox
+    enabled: true
+    company_tier: B
+    priority_sectors: [swe, data_ml]
+    type: greenhouse
+    board_token: roblox
+    title_terms: [intern, internship, co-op, coop, student]
+    max_detail_resolutions: 100
+    target_year: 2027
+    us_only: true
+
+  - name: Autodesk
+    enabled: true
+    company_tier: B
+    priority_sectors: [swe, data_ml, hardware]
+    type: workday
+    host: autodesk.wd1.myworkdayjobs.com
+    tenant: autodesk
+    site: Ext
+    search_text: intern
+    facet_terms:
+      workerSubType: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
+  # Tier C safety-net expansion, still subject to the same technical-fit and
+  # Summer 2027 eligibility gates as every higher-tier company.
+  - name: Northrop Grumman
+    enabled: true
+    company_tier: C
+    priority_sectors: [hardware, swe, data_ml]
+    type: workday
+    host: ngc.wd1.myworkdayjobs.com
+    tenant: ngc
+    site: Northrop_Grumman_External_Site
+    search_text: intern
+    facet_terms:
+      workerSubType: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
+  - name: RTX
+    enabled: true
+    company_tier: C
+    priority_sectors: [hardware, swe, data_ml]
+    type: workday
+    host: globalhr.wd5.myworkdayjobs.com
+    tenant: globalhr
+    site: REC_RTX_Ext_Gateway
+    search_text: intern
+    facet_terms:
+      workerSubType: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
+  - name: Capital One
+    enabled: true
+    company_tier: C
+    priority_sectors: [swe, data_ml]
+    type: workday
+    host: capitalone.wd12.myworkdayjobs.com
+    tenant: capitalone
+    site: Capital_One
+    search_text: intern
+    facet_terms:
+      workerSubType: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
+  - name: Mastercard
+    enabled: true
+    company_tier: C
+    priority_sectors: [swe, data_ml]
+    type: workday
+    host: mastercard.wd1.myworkdayjobs.com
+    tenant: mastercard
+    site: Campus
+    search_text: intern
+    facet_terms:
+      workerSubType: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
+  - name: HubSpot
+    enabled: true
+    company_tier: C
+    priority_sectors: [swe, data_ml]
+    type: greenhouse
+    board_token: hubspotjobs
+    title_terms: [intern, internship, co-op, coop, student]
+    max_detail_resolutions: 100
+    target_year: 2027
+    us_only: true
+
+  - name: Cox Enterprises
+    enabled: true
+    company_tier: C
+    priority_sectors: [swe, data_ml]
+    type: workday
+    host: cox.wd1.myworkdayjobs.com
+    tenant: cox
+    site: Cox_External_Career_Site_1
+    search_text: intern
+    facet_terms:
+      workerSubType: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
+  - name: Home Depot
+    enabled: true
+    company_tier: C
+    priority_sectors: [swe, data_ml]
+    type: workday
+    host: homedepot.wd5.myworkdayjobs.com
+    tenant: homedepot
+    site: CareerDepot
+    search_text: intern
+    facet_terms:
+      workerSubType: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
+  - name: Fiserv
+    enabled: true
+    company_tier: C
+    priority_sectors: [swe, data_ml]
+    type: workday
+    host: fiserv.wd5.myworkdayjobs.com
+    tenant: fiserv
+    site: ext
+    search_text: intern
+    facet_terms:
+      workerSubType: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
+  - name: Equifax
+    enabled: true
+    company_tier: C
+    priority_sectors: [data_ml, swe]
+    type: workday
+    host: equifax.wd5.myworkdayjobs.com
+    tenant: equifax
+    site: External
+    search_text: intern
+    facet_terms:
+      jobFamilyGroup: [intern, student, co-op]
+    target_year: 2027
+    us_only: true
+
 # These are desirable CE targets, but we intentionally do NOT enable them until
 # a stable, testable public career-source adapter is commissioned. Keeping them
 # staged is safer than pretending a brittle scraper is production-ready.
@@ -274,3 +525,81 @@ staged_companies:
   - name: Visa
     company_tier: C
     reason: Its historical SmartRecruiters tenant currently reports zero active postings, so enabling it would provide no useful health signal.
+  - name: Snowflake
+    company_tier: A
+    reason: Current careers frontend needs a stable public listing endpoint or dedicated adapter before activation.
+  - name: Bloomberg
+    company_tier: A
+    reason: Current custom careers search needs a dedicated validated adapter.
+  - name: Western Digital
+    company_tier: B
+    reason: Previously known Workday endpoint no longer accepts public CXS searches; current provider must be re-identified.
+  - name: Seagate
+    company_tier: B
+    reason: Previously known Workday endpoint no longer accepts public CXS searches; current provider must be re-identified.
+  - name: Keysight
+    company_tier: B
+    reason: Previously known Workday endpoint no longer accepts public CXS searches; current provider must be re-identified.
+  - name: Skyworks
+    company_tier: B
+    reason: Previously known Workday endpoint no longer accepts public CXS searches; current provider must be re-identified.
+  - name: Qorvo
+    company_tier: B
+    reason: Previously known Workday endpoint no longer accepts public CXS searches; current provider must be re-identified.
+  - name: onsemi
+    company_tier: B
+    reason: Previously known Workday endpoint no longer accepts public CXS searches; current provider must be re-identified.
+  - name: Renesas
+    company_tier: B
+    reason: Previously known Workday endpoint no longer accepts public CXS searches; current provider must be re-identified.
+  - name: Garmin
+    company_tier: B
+    reason: Current careers search needs a dedicated validated adapter.
+  - name: Motorola Solutions
+    company_tier: B
+    reason: Public Workday board is healthy, but it exposes no internship job-type facet and the keyword query expands to the full board; add only after a rate-safe narrowing path is implemented.
+  - name: Intuit
+    company_tier: B
+    reason: Current custom careers search needs a dedicated validated adapter.
+  - name: MathWorks
+    company_tier: B
+    reason: Current custom careers search needs a dedicated validated adapter.
+  - name: L3Harris
+    company_tier: C
+    reason: Previously known Workday endpoint no longer accepts public CXS searches; current provider must be re-identified.
+  - name: Lockheed Martin
+    company_tier: C
+    reason: Current custom careers search needs a dedicated validated adapter.
+  - name: Honeywell
+    company_tier: C
+    reason: Previously known Workday endpoint no longer accepts public CXS searches; current provider must be re-identified.
+  - name: GE Aerospace
+    company_tier: C
+    reason: Candidate public Workday endpoint returned 404 and must be re-identified before activation.
+  - name: Siemens
+    company_tier: C
+    reason: Current careers flow needs a dedicated validated adapter.
+  - name: Rockwell Automation
+    company_tier: C
+    reason: Public Workday board is healthy, but it exposes no internship job-type facet and the keyword query expands to the full board; add only after a rate-safe narrowing path is implemented.
+  - name: Emerson
+    company_tier: C
+    reason: Current careers flow needs a dedicated validated adapter.
+  - name: JPMorgan Chase
+    company_tier: C
+    reason: Current careers flow needs a dedicated validated adapter.
+  - name: Fidelity
+    company_tier: C
+    reason: Current careers flow needs a dedicated validated adapter.
+  - name: NCR Voyix
+    company_tier: C
+    reason: Current careers flow needs a dedicated validated adapter.
+  - name: Delta
+    company_tier: C
+    reason: Previously known Workday endpoint no longer accepts public CXS searches; current provider must be re-identified.
+  - name: UPS
+    company_tier: C
+    reason: Current careers flow needs a dedicated validated adapter.
+  - name: Global Payments
+    company_tier: C
+    reason: Current careers flow needs a dedicated validated adapter.

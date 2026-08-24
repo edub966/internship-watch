@@ -197,10 +197,11 @@ class EightfoldSource(JobSource):
                     break
 
         # Pass 3: if the tie-ordering is unstable enough that local repair did
-        # not fill the snapshot, shift every page boundary. Unioning the
-        # results avoids depending on one particular tie order.
+        # not fill the snapshot, exhaust every shifted page boundary. Unioning
+        # all ten boundary alignments avoids depending on one particular tie
+        # order while remaining bounded by the provider-reported result count.
         if total and len(jobs_by_pid) < total:
-            for offset in (1, 5):
+            for offset in range(1, self.PAGE_SIZE):
                 for start in range(offset, total, self.PAGE_SIZE):
                     positions, page_total = self._request_page(session, start)
                     requests_made += 1

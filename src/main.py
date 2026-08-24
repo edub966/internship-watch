@@ -32,6 +32,7 @@ def build_source(cfg):
             name, cfg["host"], cfg["tenant"], cfg["site"], cfg.get("search_text", "intern"),
             cfg.get("target_year"), cfg.get("resolve_ambiguous_relevant", True),
             cfg.get("max_detail_resolutions", 100),
+            cfg.get("facet_terms"),
         )
     if t == "amazon":
         return AmazonSource(
@@ -49,7 +50,7 @@ def build_source(cfg):
     if t == "google":
         return GoogleSource(name, cfg.get("url") or cfg.get("board_url") or cfg.get("jobs_url"))
     if t == "lever":
-        return LeverSource(name, cfg["site"])
+        return LeverSource(name, cfg["site"], cfg.get("max_pages", 10))
     if t == "greenhouse":
         return GreenhouseSource(
             name, cfg["board_token"], cfg.get("title_terms"),
