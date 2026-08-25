@@ -17,5 +17,5 @@ def test_fy27_and_2027_are_accepted():
     assert matches_target_year(job("Software Engineering Intern - Summer 2027"), 2027)
 
 
-def test_no_year_stays_eligible():
-    assert matches_target_year(job("Hardware Engineering Intern"), 2027)
+def test_no_year_fails_closed_for_a_configured_target_cycle():
+    assert not matches_target_year(job("Hardware Engineering Intern"), 2027)

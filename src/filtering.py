@@ -7,9 +7,20 @@ from bs4 import BeautifulSoup
 from src.models import Job
 
 
-INTERNSHIP_TERMS = [
-    "intern", "internship", "co-op", "coop", "student",
-]
+INTERNSHIP_TITLE_TERMS = ("intern", "internship")
+
+_COOP_PATTERN = re.compile(r"\b(?:co[- ]?op|cooperative education)\b", re.I)
+_OFF_TERM_TITLE_PATTERN = re.compile(r"\b(?:winter|spring|fall|autumn)\b", re.I)
+_OFF_TERM_DESCRIPTION_PATTERNS = (
+    re.compile(r"\b(?:winter|spring|fall|autumn)\s+(?:20\d{2}\s+)?(?:intern|internship|co[- ]?op)\b", re.I),
+    re.compile(r"\b(?:intern|internship|co[- ]?op)\b.{0,30}\b(?:winter|spring|fall|autumn)\s+20\d{2}\b", re.I),
+)
+_NON_SUMMER_DURATION_PATTERNS = (
+    re.compile(r"\byear[- ]round\s+(?:intern|internship|program)\b", re.I),
+    re.compile(r"\bacademic[- ]year\s+(?:intern|internship|program)\b", re.I),
+    re.compile(r"\b(?:six|6)[- ]months?\b.{0,30}\b(?:intern|internship|co[- ]?op)\b", re.I),
+    re.compile(r"\b(?:intern|internship|co[- ]?op)\b.{0,30}\b(?:six|6)[- ]months?\b", re.I),
+)
 
 CE_TERMS = {
     "computer engineering": 6,
@@ -150,12 +161,52 @@ def _title_years(title: str) -> set[int]:
     return years
 
 
-def matches_target_year(job: Job, target_year: int | None) -> bool:
-    """Reject only when the TITLE explicitly names a different internship year."""
+def _title_identifies_internship(title: str) -> bool:
+    return any(_contains_term(title or "", term) for term in INTERNSHIP_TITLE_TERMS)
+
+
+def target_cycle_mismatch_reason(job: Job, target_year: int | None) -> str | None:
+    """Return why a posting is not a Summer target-year internship.
+
+    Production company configs set ``target_year``. When they do, missing cycle
+    evidence fails closed: technical keywords cannot turn an undated internship,
+    an off-season term, a co-op, or a year-round program into a Summer alert.
+    """
     if not target_year:
-        return True
-    years = _title_years(job.title or "")
-    return not years or int(target_year) in years
+        return None
+
+    title, text = _text(job)
+    if _COOP_PATTERN.search(text):
+        return "co-op excluded; only Summer internships are enabled"
+    if _OFF_TERM_TITLE_PATTERN.search(title):
+        return "off-term internship excluded; only Summer internships are enabled"
+    if any(pattern.search(text) for pattern in _OFF_TERM_DESCRIPTION_PATTERNS):
+        return "off-term internship excluded; only Summer internships are enabled"
+    if any(pattern.search(text) for pattern in _NON_SUMMER_DURATION_PATTERNS):
+        return "year-round or six-month program excluded; only Summer internships are enabled"
+
+    target_year = int(target_year)
+    title_years = _title_years(job.title or "")
+    if title_years:
+        if target_year not in title_years:
+            return f"posting title is not for the {target_year} internship cycle"
+        return None
+
+    target = re.escape(str(target_year))
+    target_cycle_patterns = (
+        rf"\bsummer\s+{target}\b",
+        rf"\b{target}\s+summer\b",
+        rf"\b(?:intern|internship)s?\b.{{0,40}}\b{target}\b",
+        rf"\b{target}\b.{{0,40}}\b(?:intern|internship)s?\b",
+    )
+    if any(re.search(pattern, text, re.I) for pattern in target_cycle_patterns):
+        return None
+    return f"Summer {target_year} cycle is not explicit"
+
+
+def matches_target_year(job: Job, target_year: int | None) -> bool:
+    """Backward-compatible name for the strict Summer target-cycle gate."""
+    return target_cycle_mismatch_reason(job, target_year) is None
 
 
 def _candidate_eligible_special_programs() -> bool:
@@ -170,12 +221,25 @@ def evaluate_eligibility(job: Job, candidate_graduation_year: int | None = None)
     reasons: list[str] = []
     candidate_grad = candidate_graduation_year or int(os.getenv("EXPECTED_GRAD_YEAR", "2029"))
 
-    # Internship / job-type gate.
-    if not any(_contains_term(text, term) for term in INTERNSHIP_TERMS):
+    # Internship / job-type gate. The title itself must identify an internship;
+    # mentions of interns, students, or internal partners in a regular job's
+    # description are not evidence that the position is an internship.
+    title_is_internship = _title_identifies_internship(title)
+    if not title_is_internship:
         status = "ineligible"
-        reasons.append("no internship or student term detected")
+        reasons.append("title does not identify an internship")
         return EligibilityResult(status=status, reasons=reasons, confidence=0.98,
                                 degree_match=False, job_type_match=False, term_match=False)
+
+    if _COOP_PATTERN.search(title):
+        status = "ineligible"
+        reasons.append("co-op excluded; internship titles only")
+        return EligibilityResult(status=status, reasons=reasons, confidence=0.98,
+                                degree_match=None, job_type_match=False, term_match=False)
+
+    if _contains_term(title, "graduate"):
+        status = "ineligible"
+        reasons.append("graduate internship title")
 
     non_intern_job_type_patterns = [
         r"\bfull[- ]time\b",
@@ -281,8 +345,8 @@ def evaluate_eligibility(job: Job, candidate_graduation_year: int | None = None)
             r"\bph\.?d\.?\s+students?\s+only\b",
             r"\bgraduate\s+students?\s+only\b",
         ]),
-        job_type_match=bool(re.search(r"\bintern\b|\bco[- ]?op\b|\bstudent\b", text, re.I)),
-        term_match=bool(re.search(r"\bintern\b|\bco[- ]?op\b|\bstudent\b", title, re.I)),
+        job_type_match=title_is_internship and status != "ineligible",
+        term_match=title_is_internship,
         graduation_window_match=not bool(re.search(r"\b(?:graduate|graduating|graduation)\b.{0,40}\b(?:before|by|no later than)\b", text, re.I)),
         special_program_match=not any(re.search(p, text, re.I) is not None for p in [r"\bskillbridge\b", r"\breturnship\b"]),
     )
@@ -315,14 +379,11 @@ def score_sector_fit(job: Job) -> dict[str, float]:
 def relevance_score(job: Job, target_year: int | None = None) -> float:
     title, text = _text(job)
 
-    if not any(_contains_term(text, term) for term in INTERNSHIP_TERMS):
-        return -20.0
-    if not matches_target_year(job, target_year):
-        return -30.0
-
     eligibility = evaluate_eligibility(job)
     if eligibility.status == "ineligible":
         return -50.0
+    if not matches_target_year(job, target_year):
+        return -30.0
 
     sector_scores = score_sector_fit(job)
     best_sector_score = max(sector_scores.values())
@@ -344,19 +405,13 @@ def relevance_score(job: Job, target_year: int | None = None) -> float:
 
 
 def is_relevant(job: Job, threshold: float = 12.0, target_year: int | None = None) -> bool:
-    _, text = _text(job)
-
-    if not any(_contains_term(text, term) for term in INTERNSHIP_TERMS):
-        job.score = -20.0
+    eligibility = evaluate_eligibility(job)
+    if eligibility.status == "ineligible":
+        job.score = -50.0
         return False
 
     if not matches_target_year(job, target_year):
         job.score = -30.0
-        return False
-
-    eligibility = evaluate_eligibility(job)
-    if eligibility.status == "ineligible":
-        job.score = -50.0
         return False
 
     fit = score_sector_fit(job)

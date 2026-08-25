@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from src.alerts import discord_alert, discord_networking_followup
 from src.db import JobDB
 from src.enrich import TavilyBudget, build_search_specs, selected_search_specs, search_linkedin_public_index_outcome
-from src.filtering import evaluate_eligibility, is_relevant, score_sector_fit
+from src.filtering import evaluate_eligibility, is_relevant, score_sector_fit, target_cycle_mismatch_reason
 from src.locations import classify_us_location
 from src.sources.amazon import AmazonSource
 from src.sources.apple import AppleSource
@@ -83,8 +83,14 @@ def _eligibility(job, company_cfg: dict | None, threshold: float = 12.0):
         return False, "company config missing; failed closed"
 
     target_year = company_cfg.get("target_year")
+    eligibility = evaluate_eligibility(job)
+    if eligibility.status == "ineligible":
+        return False, "; ".join(eligibility.reasons) or "candidate ineligible"
+    cycle_reason = target_cycle_mismatch_reason(job, target_year)
+    if cycle_reason:
+        return False, cycle_reason
     if not is_relevant(job, threshold, target_year=target_year):
-        return False, "not CE/target-cycle relevant"
+        return False, "not technically relevant after internship eligibility gates"
 
     if company_cfg.get("us_only", True):
         decision = classify_us_location(job.location or "", company_cfg.get("type", ""))

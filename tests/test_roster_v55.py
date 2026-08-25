@@ -94,3 +94,42 @@ def test_workday_resolves_only_ambiguous_relevant_rows(monkeypatch):
     assert "United States of America" in jobs[0].location
     assert "Austin" in jobs[0].location
     assert jobs[1].location == "SAN JOSE"
+
+
+class WorkdayEligibilityDetailSession:
+    def __init__(self):
+        self.headers = {}
+        self.gets = []
+
+    def post(self, url, json=None, timeout=None):
+        return Resp({
+            "total": 1,
+            "jobPostings": [{
+                "title": "ASIC Design Intern",
+                "externalPath": "/job/AUSTIN/ASIC-Design-Intern_R3",
+                "locationsText": "Austin, TX",
+                "postedOn": "Posted Today",
+                "bulletFields": ["R3"],
+            }],
+        })
+
+    def get(self, url, timeout=None):
+        self.gets.append(url)
+        return Resp({"jobPostingInfo": {
+            "title": "ASIC Design Intern",
+            "location": "Austin, Texas, United States of America",
+            "jobDescription": "Summer 2027 internship for Bachelor's students doing RTL verification.",
+        }})
+
+
+def test_workday_resolves_missing_summer_and_degree_evidence_from_detail(monkeypatch):
+    session = WorkdayEligibilityDetailSession()
+    monkeypatch.setattr("src.sources.workday.requests.Session", lambda: session)
+    source = WorkdaySource(
+        "ChipCo", "chip.wd1.myworkdayjobs.com", "chip", "External",
+        target_year=2027,
+    )
+    jobs = source.fetch()
+    assert len(session.gets) == 1
+    assert "Summer 2027" in jobs[0].description
+    assert "missing cycle/degree record resolved from detail" in source.last_scan_note

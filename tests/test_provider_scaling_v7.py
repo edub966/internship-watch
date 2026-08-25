@@ -39,7 +39,7 @@ class FacetedWorkdaySession:
                 "externalPath": "/job/Austin/ASIC-Design-Intern_R1",
                 "locationsText": "Austin, TX",
                 "postedOn": "Posted Today",
-                "bulletFields": ["R1"],
+                "bulletFields": ["R1", "Bachelor's student internship"],
             }],
         })
 

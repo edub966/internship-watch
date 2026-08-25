@@ -1,7 +1,7 @@
 from typing import Iterable, List, Mapping
 import requests
 
-from src.filtering import is_relevant
+from src.filtering import evaluate_eligibility, is_relevant, target_cycle_mismatch_reason
 from src.locations import AMBIGUOUS, classify_us_location
 from src.models import Job
 from src.sources.base import JobSource
@@ -179,23 +179,37 @@ class WorkdaySource(JobSource):
                 break
 
         detail_lookups = 0
+        eligibility_detail_lookups = 0
         classified_from_detail = 0
         still_ambiguous = 0
         capped_ambiguous = 0
+        capped_eligibility_details = 0
         if self.resolve_ambiguous_relevant and self.max_detail_resolutions:
             for job in jobs:
-                # Only pay the extra HTTP round-trip for a posting that already
-                # passes the CE/target-cycle gate and whose list-view location
-                # would otherwise fail closed.
-                if not is_relevant(job, target_year=self.target_year):
+                # First require an internship title and plausible technical fit,
+                # but intentionally do not require target-cycle proof yet: that
+                # evidence often exists only in Workday's detail payload.
+                if not is_relevant(job, target_year=None):
                     continue
                 decision = classify_us_location(job.location or "", "workday")
-                if decision.status != AMBIGUOUS:
+                eligibility = evaluate_eligibility(job)
+                cycle_reason = target_cycle_mismatch_reason(job, self.target_year)
+                needs_eligibility_detail = (
+                    eligibility.status == "uncertain"
+                    or cycle_reason == f"Summer {self.target_year} cycle is not explicit"
+                )
+                was_ambiguous = decision.status == AMBIGUOUS
+                if not was_ambiguous and not needs_eligibility_detail:
                     continue
                 if detail_lookups >= self.max_detail_resolutions:
-                    capped_ambiguous += 1
+                    if was_ambiguous:
+                        capped_ambiguous += 1
+                    else:
+                        capped_eligibility_details += 1
                     continue
                 detail_lookups += 1
+                if needs_eligibility_detail:
+                    eligibility_detail_lookups += 1
                 try:
                     self._resolve_detail(session, job, paths.get(job.external_id, ""))
                 except requests.RequestException:
@@ -204,15 +218,21 @@ class WorkdaySource(JobSource):
                     # the row ambiguous so downstream fails closed safely.
                     pass
 
-                after = classify_us_location(job.location or "", "workday")
-                if after.status == AMBIGUOUS:
-                    still_ambiguous += 1
-                else:
-                    classified_from_detail += 1
+                if was_ambiguous:
+                    after = classify_us_location(job.location or "", "workday")
+                    if after.status == AMBIGUOUS:
+                        still_ambiguous += 1
+                    else:
+                        classified_from_detail += 1
 
         notes = [facet_note] if facet_note else []
         if detail_lookups:
             notes.append(f"{detail_lookups} Workday detail lookup{'s' if detail_lookups != 1 else ''}")
+        if eligibility_detail_lookups:
+            notes.append(
+                f"{eligibility_detail_lookups} missing cycle/degree record"
+                f"{'s' if eligibility_detail_lookups != 1 else ''} resolved from detail"
+            )
         if classified_from_detail:
             notes.append(
                 f"{classified_from_detail} ambiguous location{'s' if classified_from_detail != 1 else ''} classified from detail"
@@ -224,6 +244,11 @@ class WorkdaySource(JobSource):
         if capped_ambiguous:
             notes.append(
                 f"{capped_ambiguous} relevant ambiguous location{'s' if capped_ambiguous != 1 else ''} skipped by detail cap"
+            )
+        if capped_eligibility_details:
+            notes.append(
+                f"{capped_eligibility_details} cycle/degree detail candidate"
+                f"{'s' if capped_eligibility_details != 1 else ''} skipped by detail cap"
             )
         self.last_scan_note = ", ".join(notes)
         return jobs

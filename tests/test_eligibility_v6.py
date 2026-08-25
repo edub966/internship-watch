@@ -74,6 +74,8 @@ def test_valid_undergrad_hardware_and_ml_roles_remain_eligible():
     ml = _job("Apple Machine Learning and Artificial Intelligence Undergrad Internships", "deep learning, model evaluation, Python")
     assert evaluate_eligibility(hw).status == "eligible"
     assert evaluate_eligibility(ml).status == "eligible"
+    hw.title += " Summer 2027"
+    ml.title += " Summer 2027"
     assert is_relevant(hw, 12, target_year=2027)
     assert is_relevant(ml, 12, target_year=2027)
 
@@ -92,8 +94,8 @@ def test_grad_window_excluding_may_2029_is_ineligible():
 
 
 def test_sector_scores_distinguish_hardware_and_data_ml():
-    hardware = _job("NVIDIA Hardware ASIC Design Intern", "RTL verification, digital design, computer architecture, SystemVerilog")
-    data_ml = _job("Microsoft AI Software Engineering Intern", "Python, machine learning, deep learning, model evaluation")
+    hardware = _job("NVIDIA Hardware ASIC Design Intern Summer 2027", "RTL verification, digital design, computer architecture, SystemVerilog")
+    data_ml = _job("Microsoft AI Software Engineering Intern Summer 2027", "Python, machine learning, deep learning, model evaluation")
     hw_scores = score_sector_fit(hardware)
     ml_scores = score_sector_fit(data_ml)
     assert hw_scores["hardware"] > hw_scores["swe"]

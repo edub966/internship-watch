@@ -265,7 +265,11 @@ The code runs a usage guard before search requests and fails closed if the budge
 
 ## Eligibility and sector scoring
 
-`src/filtering.py` evaluates the pipeline in this order: normalize, classify the opportunity, evaluate candidate eligibility, classify sectors, then compute technical fit. Explicit graduate-only, non-intern/new-grad, restricted special-program, and incompatible graduation-window postings are ineligible before sector terms can score. Missing degree or graduation information remains uncertain instead of becoming a fabricated rejection.
+`src/filtering.py` evaluates the pipeline in this order: normalize, classify the opportunity, evaluate candidate eligibility, enforce the target cycle, classify sectors, then compute technical fit. The title itself must identify an internship; mentions such as “interview interns,” “train interns,” `internal`, or `student` in a regular job description cannot rescue a non-intern title. `Graduate Intern` is a hard rejection while `Undergraduate Intern` remains valid.
+
+For companies configured with `target_year: 2027`, alerts fail closed unless the posting explicitly identifies the 2027 internship cycle. Summer 2027 titles, descriptions, and company-wide `2027 Internships` pools qualify. Winter, spring, fall, co-op, year-round, academic-year, six-month, wrong-year, and undated internships do not. Workday resolves technically relevant internship details when list rows omit cycle or degree evidence, so strict filtering does not depend solely on the abbreviated listing payload.
+
+Explicit graduate-only, non-intern/new-grad, restricted special-program, and incompatible graduation-window postings are ineligible before sector terms can score. Missing degree information on an otherwise proven Summer 2027 internship remains uncertain instead of becoming a fabricated rejection.
 
 Candidate configuration defaults to an expected 2029 graduation and no SkillBridge/returnship eligibility. Override those defaults with `EXPECTED_GRAD_YEAR` and `CANDIDATE_SPECIAL_PROGRAM_ELIGIBLE`.
 
