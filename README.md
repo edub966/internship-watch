@@ -86,7 +86,6 @@ TAVILY_AUTO_AUTHOR_LOOKUP=true
 TAVILY_MAX_AUTHOR_LOOKUPS_PER_JOB=2
 TAVILY_MAX_QUERIES=2
 TAVILY_MAX_CREDITS_PER_RUN=20
-TAVILY_DAILY_CREDIT_CAP=60
 TAVILY_CREDIT_RESERVE=100
 TAVILY_REQUIRE_USAGE_CHECK=true
 TAVILY_MAX_LEADS_PER_JOB=14
@@ -255,7 +254,7 @@ This project uses Tavily liberally for qualified jobs while retaining hard usage
 - Company/role recruiter and author-profile searches are cached for 14 days; exact-post searches are cached for 18 hours.
 - `uf_engineer` remains opt-in through `--deep-enrich --include-uf`.
 - `TAVILY_MAX_CREDITS_PER_RUN` controls the maximum per-run search budget
-- `TAVILY_DAILY_CREDIT_CAP` is the local rolling-24h cap enforced by the SQLite ledger
+- There is no local rolling-24h Tavily cap; the ledger remains available for usage reporting
 - `TAVILY_CREDIT_RESERVE` keeps a protected reserve before a new search is allowed
 - `TAVILY_REQUIRE_USAGE_CHECK=true` enforces a fail-closed usage check before search requests
 - Balanced per-kind quotas prevent job posts from crowding recruiter/profile results out of alerts.

@@ -197,9 +197,10 @@ def test_manual_kinds_can_request_exact_without_uf():
     assert [s.kind for s in specs] == ["exact_post", "recruiter"]
 
 
-def test_local_daily_cap_blocks_even_if_remote_usage_lags(monkeypatch, tmp_path):
+def test_legacy_daily_cap_environment_no_longer_blocks_searches(monkeypatch, tmp_path):
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
     monkeypatch.setenv("TAVILY_AUTO_SEARCH_KINDS", "recruiter")
+    monkeypatch.setenv("TAVILY_DAILY_CREDIT_CAP", "0")
     db = JobDB(str(tmp_path / "x.db"))
     for _ in range(3):
         db.record_tavily_credit("NVIDIA", "recruiter", "x")
@@ -207,12 +208,12 @@ def test_local_daily_cap_blocks_even_if_remote_usage_lags(monkeypatch, tmp_path)
     budget = TavilyBudget(
         "tvly-test", max_credits_per_run=10, reserve_credits=0,
         require_usage_check=True, usage_getter=_usage,
-        daily_credit_cap=3, local_daily_usage_getter=db.tavily_credits_used_today,
     )
     leads = search_linkedin_public_index(_job(), db=db, budget=budget, client=client)
-    assert leads == []
-    assert client.calls == []
-    assert "rolling-24h" in budget.block_reason.lower()
+    assert leads == []  # The fake recruiter profile is below the lead-quality threshold.
+    assert len(client.calls) == 1
+    assert budget.spent_this_run == 1
+    assert not budget.block_reason
     db.close()
 
 
@@ -224,7 +225,6 @@ def test_paid_attempt_is_written_to_local_ledger(monkeypatch, tmp_path):
     budget = TavilyBudget(
         "tvly-test", max_credits_per_run=2, reserve_credits=0,
         require_usage_check=True, usage_getter=_usage,
-        daily_credit_cap=20, local_daily_usage_getter=db.tavily_credits_used_today,
     )
     search_linkedin_public_index(_job(), db=db, budget=budget, client=client)
     assert db.tavily_credits_used_today() == 1
@@ -254,8 +254,7 @@ def test_recruiter_dedupe_preserves_distinct_profile_urls(monkeypatch, tmp_path)
             ]}
 
     db = JobDB(str(tmp_path / "x.db"))
-    budget = TavilyBudget("tvly-test", 2, 0, True, _usage, daily_credit_cap=20,
-                          local_daily_usage_getter=db.tavily_credits_used_today)
+    budget = TavilyBudget("tvly-test", 2, 0, True, _usage)
     leads = search_linkedin_public_index(_job(), db=db, budget=budget, client=DuplicateRecruiterClient())
     assert len(leads) == 3
     assert {lead.url for lead in leads} == {"https://www.linkedin.com/in/a", "https://www.linkedin.com/in/b", "https://www.linkedin.com/in/c"}

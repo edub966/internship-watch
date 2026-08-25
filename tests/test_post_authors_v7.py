@@ -74,8 +74,7 @@ def test_exact_post_author_is_resolved_classified_and_affiliation_tagged(monkeyp
     client = AuthorClient()
     budget = TavilyBudget(
         "tvly-test", max_credits_per_run=20, reserve_credits=100,
-        require_usage_check=True, usage_getter=_usage, daily_credit_cap=60,
-        local_daily_usage_getter=db.tavily_credits_used_last_24h,
+        require_usage_check=True, usage_getter=_usage,
     )
 
     outcome = search_linkedin_public_index_outcome(
@@ -142,8 +141,7 @@ def test_default_policy_resolves_two_distinct_exact_post_authors(monkeypatch, tm
     client = MultipleAuthorClient()
     budget = TavilyBudget(
         "tvly-test", max_credits_per_run=20, reserve_credits=100,
-        require_usage_check=True, usage_getter=_usage, daily_credit_cap=60,
-        local_daily_usage_getter=db.tavily_credits_used_last_24h,
+        require_usage_check=True, usage_getter=_usage,
     )
     outcome = search_linkedin_public_index_outcome(_job(), db=db, budget=budget, client=client)
 

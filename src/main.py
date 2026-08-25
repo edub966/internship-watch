@@ -178,7 +178,7 @@ def preflight(config_path: str):
     print(f"Automatic exact-post author lookup: {os.getenv('TAVILY_AUTO_AUTHOR_LOOKUP', 'true')}")
     print(f"Author profile lookups per job: {os.getenv('TAVILY_MAX_AUTHOR_LOOKUPS_PER_JOB', '2')}")
     print(f"Per-run Tavily cap: {os.getenv('TAVILY_MAX_CREDITS_PER_RUN', '20')}")
-    print(f"Local rolling-24h Tavily cap: {os.getenv('TAVILY_DAILY_CREDIT_CAP', '60')}")
+    print("Local rolling-24h Tavily cap: disabled")
     print(f"Protected Tavily reserve: {os.getenv('TAVILY_CREDIT_RESERVE', '100')}")
     print("Usage verification before search: " + os.getenv("TAVILY_REQUIRE_USAGE_CHECK", "true"))
     print("Queue revalidation before Tavily/Discord: enabled")
@@ -190,9 +190,7 @@ def preflight(config_path: str):
         db_for_usage = JobDB(_db_path())
         try:
             local_today = db_for_usage.tavily_credits_used_last_24h()
-            usage_budget = TavilyBudget(
-                key, local_daily_usage_getter=db_for_usage.tavily_credits_used_last_24h
-            )
+            usage_budget = TavilyBudget(key)
             if usage_budget.check():
                 print(
                     f"Tavily usage guard: PASS via {usage_budget.usage_source}; "
@@ -426,7 +424,7 @@ def run(config_path: str, threshold: float, enrich: bool, seed: bool = False):
 
         key = os.getenv("TAVILY_API_KEY", "")
         budget = (
-            TavilyBudget(key, local_daily_usage_getter=db.tavily_credits_used_last_24h)
+            TavilyBudget(key)
             if enrich and key else None
         )
 
@@ -671,7 +669,6 @@ def bootstrap_networking(config_path: str, threshold: float):
         budget = TavilyBudget(
             key,
             max_credits_per_run=bootstrap_cap,
-            local_daily_usage_getter=db.tavily_credits_used_last_24h,
         )
 
         # Process companies whose recruiter search is already cached first.
@@ -875,7 +872,7 @@ def deep_enrich(config_path: str, company_name: str, external_id: str, include_u
         kinds = ["exact_post", "recruiter"]
         if include_uf:
             kinds.append("uf_engineer")
-        budget = TavilyBudget(key, local_daily_usage_getter=db.tavily_credits_used_last_24h)
+        budget = TavilyBudget(key)
         outcome = search_linkedin_public_index_outcome(job, db=db, budget=budget, kinds=kinds)
         for lead in outcome.leads:
             db.add_lead_record(job, lead)

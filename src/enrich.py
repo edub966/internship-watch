@@ -79,8 +79,6 @@ class TavilyBudget:
         reserve_credits: Optional[int] = None,
         require_usage_check: Optional[bool] = None,
         usage_getter=None,
-        daily_credit_cap: Optional[int] = None,
-        local_daily_usage_getter=None,
     ):
         self.api_key = api_key
         self.max_credits_per_run = max_credits_per_run if max_credits_per_run is not None else int(
@@ -95,11 +93,6 @@ class TavilyBudget:
             }
         self.require_usage_check = require_usage_check
         self.usage_getter = usage_getter or self._fetch_usage
-        self.daily_credit_cap = daily_credit_cap if daily_credit_cap is not None else int(
-            os.getenv("TAVILY_DAILY_CREDIT_CAP", "60")
-        )
-        self.local_daily_usage_getter = local_daily_usage_getter
-        self.local_spent_before_run = 0
         self.spent_this_run = 0
         self.remaining_before_search: Optional[int] = None
         self.usage_source = ""
@@ -123,22 +116,6 @@ class TavilyBudget:
         if self.max_credits_per_run <= 0:
             self.block_reason = "per-run Tavily budget is 0"
             return False
-
-        if self.daily_credit_cap <= 0:
-            self.block_reason = "daily Tavily budget is 0"
-            return False
-        if self.local_daily_usage_getter is not None:
-            try:
-                self.local_spent_before_run = max(0, int(self.local_daily_usage_getter()))
-            except Exception as e:
-                self.block_reason = f"local Tavily usage ledger failed safely: {e}"
-                return False
-            if self.local_spent_before_run >= self.daily_credit_cap:
-                self.block_reason = (
-                    f"local rolling-24h Tavily cap reached ({self.daily_credit_cap}); "
-                    f"{self.local_spent_before_run} recorded in last 24h"
-                )
-                return False
 
         try:
             payload = self.usage_getter()
@@ -200,11 +177,6 @@ class TavilyBudget:
             return False
         if self.spent_this_run >= self.max_credits_per_run:
             self.block_reason = f"per-run Tavily cap reached ({self.max_credits_per_run})"
-            return False
-        if self.local_spent_before_run + self.spent_this_run >= self.daily_credit_cap:
-            self.block_reason = (
-                f"local rolling-24h Tavily cap reached ({self.daily_credit_cap})"
-            )
             return False
         if self.remaining_before_search is not None:
             projected_remaining = self.remaining_before_search - self.spent_this_run - 1
